@@ -8,6 +8,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 |---|---|
 | `regionMapForge.html` | Full version. Frame a real place on a live map and forge a region from real data. Open it in a desktop browser. |
 | `demo/index.html` | Mobile demo, **generated from the full version** by `tools/build_demo.py`. Makes fictional regions (terrain, rivers, named roads, lakes, seas, ranges, towns) offline, with the same editor, naming, rerolls, locks, themes, animations and undo. No real-map overlay, share links, Wikipedia or file import/export. |
+| `tools/apply_to_pokeemerald.py` | Installs a pokeemerald export into a pokeemerald checkout (bundled into each export ZIP). |
 | `tools/build_demo.py` | Rebuilds the demo from `regionMapForge.html`. Run it after changing the full version. |
 | `data/ne/` | Bundled map data: roads (with route numbers), rivers, lakes, seas, mountain ranges and landforms, towns and peaks, cut into 10°×10° tiles (~11 MB for the whole world; a region loads only the tiles it touches). |
 | `tools/build_static_data.py` | Rebuilds `data/ne/` from the source datasets. |
@@ -45,6 +46,24 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 2. Search or pan so the dashed 28×15 frame covers your region. Rotate the frame in 15° steps to fit coastlines or valleys, and type an exact **km per square** (minimum 0.112, about 1:50,000 at the OGC 0.28 mm pixel; no maximum). Rotated maps get a north arrow.
 3. Set the number of towns and extra routes, then press **Forge Region**.
 4. Edit as needed, then export.
+
+## Export to pokeemerald
+
+**EXPORT TO POKEEMERALD** downloads a ZIP for a [pret/pokeemerald](https://github.com/pret/pokeemerald) (or pokeemerald-expansion) checkout:
+
+1. Unzip it anywhere.
+2. `python apply_to_pokeemerald.py /path/to/pokeemerald`
+3. `make`
+
+How it fits into Emerald:
+
+- **Existing map-section IDs are reused, not added.** MAPSEC IDs are referenced all over the game and stored in one byte (213 already exist), so your towns take the Hoenn town slots in journey order (your starting town becomes `MAPSEC_LITTLEROOT_TOWN`), routes take `MAPSEC_ROUTE_101` onward, and landmarks take cave/landmark slots like `MAPSEC_MT_CHIMNEY`. Only names and positions change, so everything still compiles. `region_export.json` and the README in the ZIP list the mapping.
+- **Names** are converted to the game's character set and fit to 16 characters (`MAP_NAME_LENGTH`), abbreviating common words first (MT., L., R., XING…).
+- **Map picture** in Emerald's exact format: a 64×64 affine tilemap (`map.bin`, one byte per tile, map grid at tile (1, 2)), 8-bit tiles (`map.png`, at most 256; near-duplicates are merged if needed) and a 48-colour palette (`map.pal`) loaded at index 112. Verified with pokeemerald's own `gbagfx`.
+- The script edits `region_map_sections.json`, rewrites `region_map_layout.h` (keeping your file's declaration), installs the graphics and updates `-num_tiles`. Each changed file is backed up once as `*.forge-backup`.
+- Fly destinations and maps still point at the original Hoenn maps until you build your own; unused Hoenn sections keep their names and positions but aren't on the map.
+
+`tools/apply_to_pokeemerald.py` is the install script (the site includes it in each ZIP).
 
 ## Data sources
 

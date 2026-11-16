@@ -41,7 +41,7 @@ rep('    <div class="row">\n      <label><input type="checkbox" id="overlayOn">'
 rep('<button class="primary" id="forgeBtn">FORGE REGION ▶</button>', '<button class="primary" id="forgeBtn">NEW REGION ▶</button>')
 rep('  .hint{font-size:12px;opacity:.7;margin-top:8px}',
     '  .hint{font-size:12px;opacity:.7;margin-top:8px}\n'
-    '  #importBtn,#shareBtn,#shareOut,#pngBtn,#pngRawBtn,#jsonBtn{display:none!important}\n'
+    '  #importBtn,#shareBtn,#shareOut,#pngBtn,#pngRawBtn,#jsonBtn,#emeraldBtn{display:none!important}\n'
     '  .dlg{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}\n'
     '  .dlgBox{width:100%;max-width:360px}')
 credit_start = s.index('  <p class="hint" style="text-align:center">Data:')

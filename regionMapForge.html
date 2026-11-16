@@ -164,6 +164,7 @@
       <button id="pngBtn" title="Map with title, legend, scale bar and north arrow">EXPORT PNG</button>
       <button id="pngRawBtn" title="Just the map, 4× size, for game assets">MAP-ONLY PNG</button>
       <button id="jsonBtn">EXPORT JSON</button>
+      <button id="emeraldBtn" title="ZIP with the region map files and a script that installs them into a pokeemerald checkout">EXPORT TO POKEEMERALD</button>
     </div>
     <div class="hint" id="toolHint"></div>
     <div class="actions">
@@ -1183,6 +1184,7 @@ const objIds = new WeakMap(); let nextObjId = 1;
 const idOf = o => o ? (objIds.get(o) || (objIds.set(o, nextObjId++), nextObjId - 1)) : 0;
 let staticKey = '', routeKey = '';
 const anim = { dashes:[], foam:[], glints:[], clouds:[] };
+let exportMode = false;                               // pokeemerald export: opaque routes, day colours, no clouds/overlays
 
 function buildStatic(){
   const t = state.terrain;
@@ -1280,11 +1282,12 @@ function buildRouteLayer(){
 function drawWater(){
   const tk = waveTick;
   for (const [X, Y, ph] of anim.dashes) px(X + [0, 1, 2, 1][(tk + ph) % 4], Y, 3, 1, PAL.deep2);   // swells sway 0→1→2→1 px
+  if (exportMode) return;
   for (const [X, Y, ph] of anim.foam) if ((ph + tk) % 28 === 0) px(X, Y, 1, 1, PAL.foam);          // shoreline sparkle
   for (const [X, Y, ph] of anim.glints) if ((ph + tk) % 40 === 0) px(X, Y, 1, 1, PAL.shallow);    // lake glint
 }
 function drawClouds(){
-  if (!$('showClouds').checked || !anim.clouds.length) return;
+  if (exportMode || !$('showClouds').checked || !anim.clouds.length) return;
   const th = $('theme').value;
   if (th === 'night' || (th === 'live' && themeNow.alt < 0)) return;      // no sun, no cloud shadows
   ctx.fillStyle = 'rgba(10,30,50,.14)'; ctx.beginPath();
@@ -1344,7 +1347,7 @@ function render(){
     if (rv.terrainX > 0) ctx.drawImage(staticLayer, 0, 0, rv.terrainX, cv.height, 0, 0, rv.terrainX, cv.height);
     px(rv.terrainX, 0, 2, cv.height, 'rgba(255,255,255,.7)');
   } else { ctx.drawImage(staticLayer, 0, 0); drawWater(); }
-  ctx.globalAlpha = ROUTE_ALPHA;
+  ctx.globalAlpha = exportMode ? 1 : ROUTE_ALPHA;
   if (rv && rv.routeD != null){                       // routes growing outward from the starting town
     ctx.save(); ctx.beginPath();
     for (const [k, d] of rv.dist) if (d <= rv.routeD) ctx.rect((k % MW)*TILE, ((k/MW) | 0)*TILE, TILE, TILE);
@@ -1375,7 +1378,7 @@ function render(){
 }
 // Small north arrow in the corner whenever the frame was rotated
 function drawNorth(){
-  const g = state.gen; if (!g || !g.b.rot) return;
+  const g = state.gen; if (exportMode || !g || !g.b.rot) return;
   const th = g.b.rot*Math.PI/180, dx = -Math.sin(th), dy = -Math.cos(th), cx = 213, cy = 11;
   px(cx-8, cy-8, 17, 17, 'rgba(0,0,0,.45)');
   ctx.save(); ctx.lineCap = 'round';
@@ -1771,7 +1774,7 @@ function refreshTheme(){
   document.body.dataset.theme = v === 'live' ? (themeNow.info.includes('night') ? 'night' : 'day') : v;
 }
 function applyTheme(){
-  const fn = themeNow.fn; if (!fn) return;
+  const fn = themeNow.fn; if (!fn || exportMode) return;
   if (themeLutKey !== themeNow.key){ themeLut = new Map(); themeLutKey = themeNow.key; }
   const img = ctx.getImageData(0, 0, cv.width, cv.height), d = img.data;
   for (let i = 0; i < d.length; i += 4){
@@ -2337,6 +2340,218 @@ $('pngBtn').onclick = async () => {
   g.fillText('Data: Natural Earth · GeoNames (CC BY 4.0) · © OpenStreetMap contributors · Terrain Tiles (AWS) · made with Region Map Forge', pad, P.height - pad + 4);
   P.toBlob(b => download('regionMap.png', b));
 };
+// ===== pokeemerald export =====
+// Reuses Emerald's existing map-section IDs (so every reference in the game still compiles, and the
+// one-byte ID limit is never hit): towns take the Hoenn town slots in journey order, routes take
+// ROUTE_101 onward, landmarks take cave/landmark slots. Builds the region map picture in Emerald's
+// exact format: an affine 64×64 tilemap (one byte per tile), 8-bit tiles (max 256) and a 48-colour
+// palette loaded at index 112. Packs everything with an install script into a ZIP.
+const EM_TOWN_SLOTS = ['LITTLEROOT_TOWN', 'OLDALE_TOWN', 'PETALBURG_CITY', 'RUSTBORO_CITY', 'DEWFORD_TOWN', 'SLATEPORT_CITY',
+  'MAUVILLE_CITY', 'VERDANTURF_TOWN', 'FALLARBOR_TOWN', 'LAVARIDGE_TOWN', 'FORTREE_CITY', 'LILYCOVE_CITY', 'MOSSDEEP_CITY',
+  'SOOTOPOLIS_CITY', 'PACIFIDLOG_TOWN', 'EVER_GRANDE_CITY'].map(s => 'MAPSEC_' + s);
+const EM_ROUTE_SLOTS = Array.from({ length:34 }, (_, i) => `MAPSEC_ROUTE_${101 + i}`);
+const EM_LANDMARK_SLOTS = ['GRANITE_CAVE', 'MT_CHIMNEY', 'SAFARI_ZONE', 'PETALBURG_WOODS', 'RUSTURF_TUNNEL', 'METEOR_FALLS', 'MT_PYRE',
+  'SHOAL_CAVE', 'VICTORY_ROAD', 'SKY_PILLAR', 'DESERT_RUINS', 'ANCIENT_TOMB', 'ISLAND_CAVE', 'JAGGED_PASS', 'FIERY_PATH', 'NEW_MAUVILLE'].map(s => 'MAPSEC_' + s);
+const EM_NAME_MAX = 16;                                // MAP_NAME_LENGTH in pokeemerald
+const EM_PAL_START = 112, EM_PAL_SIZE = 48;            // LoadPalette(sRegionMapBg_Pal, BG_PLTT_ID(7), 3 * PLTT_SIZE_4BPP)
+
+// Fit a name to the game: A–Z 0–9 space . ' - only, upper case, at most 16 characters (abbreviating first)
+const EM_ABBR = [[/\bMOUNT\b/, 'MT.'], [/\bSAINT\b/, 'ST.'], [/\bFORT\b/, 'FT.'], [/\bNORTH\b/, 'N.'], [/\bSOUTH\b/, 'S.'],
+  [/\bEAST\b/, 'E.'], [/\bWEST\b/, 'W.'], [/\bCORRIDOR\b/, 'CORR.'], [/\bCROSSING\b/, 'XING'], [/\bPASSAGE\b/, 'PASS.'],
+  [/\bHIGHWAY\b/, 'HWY'], [/\bROAD\b/, 'RD.'], [/\bRIVER\b/, 'R.'], [/\bRESERVOIR\b/, 'RES.'], [/\bLAKE\b/, 'L.'],
+  [/\bCOAST\b/, 'CST.'], [/\bRANGE\b/, 'RNG.'], [/\bMOUNTAINS\b/, 'MTS.'], [/\bVALLEY\b/, 'VLY.'], [/\bSHORE\b/, 'SHR.'],
+  [/\bCENTRAL\b/, 'CTR.'], [/\bFOOTHILLS\b/, 'FTHLS'], [/\bISLAND\b/, 'IS.'], [/\bCREEK\b/, 'CK.'], [/\bSPRINGS\b/, 'SPGS'],
+  [/\bHEIGHTS\b/, 'HTS.'], [/\bPLATEAU\b/, 'PLAT.'], [/\bGREAT\b/, 'GT.'], [/\bDESERT\b/, 'DES.'], [/\bBASIN\b/, 'BSN.'],
+  [/\bPLAINS\b/, 'PLNS.'], [/\bFLATS\b/, 'FLTS'], [/\bMOUNTAIN\b/, 'MTN.'], [/\bNATIONAL\b/, 'NATL'], [/\bWILDERNESS\b/, 'WILDS'],
+  [/\bFOREST\b/, 'FOR.'], [/\bPARK\b/, 'PK.'], [/\bBEACHFRONT\b/, 'BEACH'], [/\bLITTLE\b/, 'LTL.'], [/\bCOASTAL\b/, 'CSTL.'],
+  [/\bPLAIN\b/, 'PLN.'], [/\bUPPER\b/, 'UPR.'], [/\bLOWER\b/, 'LWR.'], [/\bSUMMIT\b/, 'SMT.'], [/\bMEADOWS\b/, 'MDWS.'],
+  [/\bTOWN\b/, 'TN.'], [/\bCITY\b/, 'CY.']];
+function emName(name){
+  let s = String(name).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9 .'\-]/g, '').replace(/\s+/g, ' ').trim() || 'UNNAMED';
+  for (const [re, ab] of EM_ABBR){ if (s.length <= EM_NAME_MAX) break; s = s.replace(re, ab); }
+  if (s.length <= EM_NAME_MAX) return s;
+  const cut = s.lastIndexOf(' ', EM_NAME_MAX);              // still too long: end at a whole word if that keeps enough
+  return (cut >= 8 ? s.slice(0, cut) : s.slice(0, EM_NAME_MAX)).trimEnd();
+}
+
+function emeraldPlan(){
+  const towns = state.towns.filter(t => t.kind !== 'landmark'), lms = state.towns.filter(t => t.kind === 'landmark');
+  const routeOrder = state.routes.map((r, i) => i).sort((a, b) => (state.routes[a].num ?? 1e9) - (state.routes[b].num ?? 1e9));
+  if (towns.length > EM_TOWN_SLOTS.length) throw new Error(`Emerald has ${EM_TOWN_SLOTS.length} town slots; this region has ${towns.length} towns.`);
+  if (routeOrder.length > EM_ROUTE_SLOTS.length) throw new Error(`Emerald has ${EM_ROUTE_SLOTS.length} route slots; this region has ${routeOrder.length} routes.`);
+  if (lms.length > EM_LANDMARK_SLOTS.length) throw new Error(`Only ${EM_LANDMARK_SLOTS.length} landmark slots; this region has ${lms.length}.`);
+  // towns in journey order: breadth-first along the routes from the starting town
+  const start = townById(state.startId) || towns[0], seen = new Set([start.id]), order = [start], q = [start.id];
+  while (q.length){ const u = q.shift();
+    for (const i of routeOrder){ const r = state.routes[i], v = r.a === u ? r.b : r.b === u ? r.a : null; const t = townById(v);
+      if (t && t.kind !== 'landmark' && !seen.has(v)){ seen.add(v); order.push(t); q.push(v); } } }
+  towns.forEach(t => { if (!seen.has(t.id)) order.push(t); });
+  const paths = routePaths(), sections = [], slotOf = new Map(), shortened = [], usedNames = new Set();
+  const add = (id, kind, srcName, sqs, obj) => {
+    let nm = emName(srcName);
+    for (let k = 2; usedNames.has(nm); k++) nm = nm.slice(0, EM_NAME_MAX - String(k).length - 1).trimEnd() + ' ' + k;
+    usedNames.add(nm);
+    if (nm !== String(srcName).toUpperCase()) shortened.push({ from:srcName, to:nm });
+    const xs = sqs.map(s => s.x), ys = sqs.map(s => s.y), x = Math.min(...xs), y = Math.min(...ys);
+    sections.push({ id, kind, name:nm, sourceName:srcName, x, y, width:Math.max(...xs) - x + 1, height:Math.max(...ys) - y + 1 });
+    slotOf.set(obj, id);
+  };
+  order.forEach((t, i) => add(EM_TOWN_SLOTS[i], 'town', t.name, footprint(t), t));
+  routeOrder.forEach((ri, k) => add(EM_ROUTE_SLOTS[k], 'route', state.routes[ri].name || `Route ${k + 1}`, paths[ri].squares, state.routes[ri]));
+  lms.forEach((t, i) => add(EM_LANDMARK_SLOTS[i], 'landmark', t.name, [t], t));
+  // the 28×15 layout: routes first come first served (journey order), then landmarks, then towns on top
+  const layout = Array.from({ length:MH }, () => Array(MW).fill('MAPSEC_NONE'));
+  routeOrder.forEach(ri => paths[ri].squares.forEach(s => { if (layout[s.y][s.x] === 'MAPSEC_NONE') layout[s.y][s.x] = slotOf.get(state.routes[ri]); }));
+  lms.forEach(t => layout[t.y][t.x] = slotOf.get(t));
+  towns.forEach(t => footprint(t).forEach(f => layout[f.y][f.x] = slotOf.get(t)));
+  return { sections, layout, shortened };
+}
+
+// ---- graphics: clean frame → ≤48 colours → 8×8 tiles (≤255 + blank) → 64×64 byte tilemap ----
+function emeraldGraphics(){
+  const keep = { sel:state.sel, link:state.linkFrom, cur:cursorOn, rev:reveal, tick:waveTick };
+  state.sel = null; state.linkFrom = null; cursorOn = false; reveal = null; waveTick = 0; exportMode = true;
+  try { render(); } finally { exportMode = false; }
+  const W = 31*8, H = 19*8;                            // tilemap columns 0–30, rows 0–18 hold the map; the grid starts at tile (1, 2)
+  const full = document.createElement('canvas'); full.width = W; full.height = H;
+  const fx = full.getContext('2d', { willReadFrequently:true });
+  fx.fillStyle = PAL.deep; fx.fillRect(0, 0, W, H);
+  fx.drawImage(cv, 8, 16);
+  Object.assign(state, { sel:keep.sel, linkFrom:keep.link }); cursorOn = keep.cur; reveal = keep.rev; waveTick = keep.tick; render();
+  const rgba = fx.getImageData(0, 0, W, H).data;
+  // colours: count, then merge the rarest into their nearest neighbour until 48 remain
+  const count = new Map();
+  for (let i = 0; i < rgba.length; i += 4){ const k = (rgba[i] << 16) | (rgba[i+1] << 8) | rgba[i+2]; count.set(k, (count.get(k) || 0) + 1); }
+  let cols = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ k, n, r:k >> 16, g:(k >> 8) & 255, b:k & 255 }));
+  const remap = new Map(cols.map(c => [c.k, c.k]));
+  const d2 = (a, b) => (a.r - b.r)**2 + (a.g - b.g)**2 + (a.b - b.b)**2;
+  while (cols.length > EM_PAL_SIZE){
+    const victim = cols.pop();
+    const near = cols.reduce((a, c) => d2(c, victim) < d2(a, victim) ? c : a);
+    near.n += victim.n;
+    for (const [k, v] of remap) if (v === victim.k) remap.set(k, near.k);
+  }
+  const index = new Map(cols.map((c, i) => [c.k, EM_PAL_START + i]));
+  const pix = new Uint8Array(W*H);
+  for (let p = 0, i = 0; i < rgba.length; i += 4, p++) pix[p] = index.get(remap.get((rgba[i] << 16) | (rgba[i+1] << 8) | rgba[i+2]));
+  // tiles: dedupe, then merge the least-used tile into its most similar one until ≤255 remain (tile 0 = blank)
+  const tw = W/8, th = H/8, keyOf = new Map(), tiles = [], useCount = [], at = [];
+  for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw; tx++){
+    const t = new Uint8Array(64);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) t[y*8 + x] = pix[(ty*8 + y)*W + tx*8 + x];
+    const key = t.join(',');
+    if (!keyOf.has(key)){ keyOf.set(key, tiles.length); tiles.push(t); useCount.push(0); }
+    const id = keyOf.get(key); useCount[id]++; at.push(id);
+  }
+  const alive = tiles.map((_, i) => i), target = tiles.map((_, i) => i);
+  const diff = (a, b) => { let n = 0; for (let i = 0; i < 64; i++) if (a[i] !== b[i]) n++; return n; };
+  let merged = 0;
+  while (alive.length > 255){
+    alive.sort((a, b) => useCount[a] - useCount[b]);
+    const v = alive.shift();
+    let best = alive[0], bd = 65;
+    for (const o of alive){ const dd = diff(tiles[v], tiles[o]); if (dd < bd){ bd = dd; best = o; } }
+    useCount[best] += useCount[v];
+    for (let i = 0; i < target.length; i++) if (target[i] === v) target[i] = best;
+    merged++;
+  }
+  const finalIds = [...new Set(alive)].sort((a, b) => a - b), newIndex = new Map(finalIds.map((id, i) => [id, i + 1]));
+  const sheetTiles = [new Uint8Array(64), ...finalIds.map(id => tiles[id])];
+  const tilemap = new Uint8Array(64*64);                // rows/columns outside the map stay tile 0 (blank)
+  at.forEach((id, n) => { tilemap[Math.floor(n/tw)*64 + (n % tw)] = newIndex.get(target[id]); });
+  const sheetW = 128, rowsN = Math.ceil(sheetTiles.length/16), sheet = new Uint8Array(sheetW*rowsN*8);
+  sheetTiles.forEach((t, i) => { const ox = (i % 16)*8, oy = Math.floor(i/16)*8;
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) sheet[(oy + y)*sheetW + ox + x] = t[y*8 + x]; });
+  const palette = new Uint8Array(768);
+  cols.forEach((c, i) => { const j = (EM_PAL_START + i)*3; palette[j] = c.r; palette[j+1] = c.g; palette[j+2] = c.b; });
+  const jasc = ['JASC-PAL', '0100', String(EM_PAL_SIZE)];
+  for (let i = 0; i < EM_PAL_SIZE; i++){ const c = cols[i] || { r:0, g:0, b:0 }; jasc.push(`${c.r} ${c.g} ${c.b}`); }
+  return { sheet, sheetW, sheetH:rowsN*8, palette, tilemap, numTiles:sheetTiles.length, colours:cols.length,
+           mergedTiles:merged, jasc:jasc.join('\r\n') + '\r\n', preview:full };
+}
+
+// ---- tiny encoders: CRC-32, indexed PNG (zlib via CompressionStream), store-only ZIP ----
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(bytes, crc = 0xFFFFFFFF){ for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 255] ^ (crc >>> 8); return crc; }
+const crcDone = c => (c ^ 0xFFFFFFFF) >>> 0;
+async function zlibDeflate(bytes){
+  const cs = new CompressionStream('deflate'), w = cs.writable.getWriter(); w.write(bytes); w.close();
+  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+}
+async function indexedPng(w, h, pixels, palette){
+  const raw = new Uint8Array((w + 1)*h);
+  for (let y = 0; y < h; y++) raw.set(pixels.subarray(y*w, (y + 1)*w), y*(w + 1) + 1);   // filter byte 0 per row
+  const chunk = (type, data) => {
+    const out = new Uint8Array(12 + data.length), dv = new DataView(out.buffer);
+    dv.setUint32(0, data.length); out.set([...type].map(c => c.charCodeAt(0)), 4); out.set(data, 8);
+    dv.setUint32(8 + data.length, crcDone(crc32(out.subarray(4, 8 + data.length)))); return out;
+  };
+  const ihdr = new Uint8Array(13), dv = new DataView(ihdr.buffer); dv.setUint32(0, w); dv.setUint32(4, h); ihdr.set([8, 3, 0, 0, 0], 8);
+  const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('PLTE', palette),
+                 chunk('IDAT', await zlibDeflate(raw)), chunk('IEND', new Uint8Array(0))];
+  return concatBytes(parts);
+}
+function concatBytes(parts){ const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0; for (const p of parts){ out.set(p, o); o += p.length; } return out; }
+function zipStore(files){                              // files: [{ name, bytes }]
+  const enc = new TextEncoder(), local = [], central = []; let offset = 0;
+  for (const f of files){
+    const name = enc.encode(f.name), crc = crcDone(crc32(f.bytes));
+    const lh = new Uint8Array(30 + name.length), l = new DataView(lh.buffer);
+    l.setUint32(0, 0x04034b50, true); l.setUint16(4, 20, true); l.setUint16(8, 0, true);
+    l.setUint32(14, crc, true); l.setUint32(18, f.bytes.length, true); l.setUint32(22, f.bytes.length, true); l.setUint16(26, name.length, true);
+    lh.set(name, 30); local.push(lh, f.bytes);
+    const ch = new Uint8Array(46 + name.length), c = new DataView(ch.buffer);
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true);
+    c.setUint32(16, crc, true); c.setUint32(20, f.bytes.length, true); c.setUint32(24, f.bytes.length, true); c.setUint16(28, name.length, true);
+    c.setUint32(42, offset, true); ch.set(name, 46); central.push(ch);
+    offset += lh.length + f.bytes.length;
+  }
+  const cd = concatBytes(central), end = new Uint8Array(22), e = new DataView(end.buffer);
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+  e.setUint32(12, cd.length, true); e.setUint32(16, offset, true);
+  return concatBytes([...local, cd, end]);
+}
+
+async function exportPokeemerald(){
+  if (!state.terrain){ setStatus('Forge a region first.'); return; }
+  let plan;
+  try { plan = emeraldPlan(); } catch (e){ setStatus('Can\'t export: ' + e.message); return; }
+  setStatus('Building pokeemerald files…');
+  let script;
+  try { const r = await fetch('tools/apply_to_pokeemerald.py'); if (!r.ok) throw 0; script = new Uint8Array(await r.arrayBuffer()); }
+  catch (e){ setStatus('Couldn\'t load tools/apply_to_pokeemerald.py: open the site over http, not as a file.'); return; }
+  const g = emeraldGraphics(), enc = new TextEncoder();
+  const exp = { format:'regionMapForge-pokeemerald/1', regionName:state.regionName || 'Region', exportedAt:new Date().toISOString(),
+    sections:plan.sections.map(({ id, kind, name, sourceName, x, y, width, height }) => ({ id, kind, name, sourceName, x, y, width, height })),
+    layout:plan.layout, shortenedNames:plan.shortened,
+    graphics:{ numTiles:g.numTiles, colours:g.colours, mergedTiles:g.mergedTiles, paletteStart:EM_PAL_START, tilemap:'64x64 bytes, map grid at tile (1, 2)' } };
+  const previewBlob = await new Promise(res => g.preview.toBlob(res));
+  const readme = [
+    `Region Map Forge → pokeemerald export: ${exp.regionName}`, '',
+    'Install:', '  1. Unzip this folder anywhere.', '  2. python apply_to_pokeemerald.py /path/to/your/pokeemerald', '  3. make', '',
+    'How it maps onto Emerald: existing map-section IDs are reused (renamed and moved), so the game keeps compiling.',
+    `  Towns (${plan.sections.filter(s => s.kind === 'town').length}) take the Hoenn town slots in journey order, routes take ROUTE_101 onward,`,
+    '  landmarks take cave/landmark slots. Fly destinations and maps still point at the original Hoenn maps until you build your own.',
+    '', 'Mapping:', ...plan.sections.map(s => `  ${s.id.padEnd(26)} ${s.name.padEnd(17)} (${s.kind}) at ${s.x},${s.y} size ${s.width}x${s.height}`),
+    '', `Graphics: ${g.numTiles} tiles, ${g.colours} colours${g.mergedTiles ? `, ${g.mergedTiles} near-duplicate tiles merged to fit the 256-tile limit` : ''}.`,
+    'preview.png shows the region map exactly as it will be drawn in game.', '',
+    'Every changed file in your checkout is backed up once as <file>.forge-backup.'
+  ].join('\n');
+  const files = [
+    { name:'README.txt', bytes:enc.encode(readme) },
+    { name:'apply_to_pokeemerald.py', bytes:script },
+    { name:'region_export.json', bytes:enc.encode(JSON.stringify(exp, null, 2)) },
+    { name:'graphics/map.png', bytes:await indexedPng(g.sheetW, g.sheetH, g.sheet, g.palette) },
+    { name:'graphics/map.pal', bytes:enc.encode(g.jasc) },
+    { name:'graphics/map.bin', bytes:g.tilemap },
+    { name:'preview.png', bytes:new Uint8Array(await previewBlob.arrayBuffer()) }
+  ];
+  const slug = (state.regionName || 'region').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'region';
+  download(`${slug}-pokeemerald.zip`, new Blob([zipStore(files)], { type:'application/zip' }));
+  setStatus(`Exported ${plan.sections.length} map sections, ${g.numTiles} tiles, ${g.colours} colours${plan.shortened.length ? `; ${plan.shortened.length} names shortened to 16 characters` : ''}.`);
+}
+$('emeraldBtn').onclick = exportPokeemerald;
+
 const mapsecId = name => 'MAPSEC_' + String(name).normalize('NFD').replace(/[^\w\s]/g, '').trim().toUpperCase().replace(/\s+/g, '_');
 $('jsonBtn').onclick = () => {
   if (!state.terrain) return;
