@@ -7,7 +7,8 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 | File | What it is |
 |---|---|
 | `regionMapForge.html` | Full version. Frame a real place on a live map and forge a region from real data. Open it in a desktop browser. |
-| `demo/index.html` | Mobile demo. Generates a fictional region (no live data needed), with the same editor, cursor and pop-up. |
+| `demo/index.html` | Mobile demo, **generated from the full version** by `tools/build_demo.py`. Makes fictional regions (terrain, rivers, named roads, lakes, seas, ranges, towns) offline, with the same editor, naming, rerolls, locks, themes, animations and undo. No real-map overlay, share links, Wikipedia or file import/export. |
+| `tools/build_demo.py` | Rebuilds the demo from `regionMapForge.html`. Run it after changing the full version. |
 | `data/ne/` | Bundled map data: roads (with route numbers), rivers, lakes, seas, mountain ranges and landforms, towns and peaks, cut into 10°×10° tiles (~11 MB for the whole world; a region loads only the tiles it touches). |
 | `tools/build_static_data.py` | Rebuilds `data/ne/` from the source datasets. |
 

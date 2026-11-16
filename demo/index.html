@@ -23,6 +23,7 @@
   #frame{position:absolute;border:3px dashed var(--accent);box-shadow:0 0 0 9999px rgba(10,16,40,.35);pointer-events:none;z-index:500}
   #frame span{position:absolute;top:-3px;left:-3px;background:var(--accent);color:#000;font-size:8px;padding:3px 5px}
   .search{display:flex;gap:6px;margin-bottom:8px}
+  input[type=number]{width:96px;padding:7px;border-radius:6px;border:2px solid var(--edge);background:#141a30;color:#fff;font-size:15px}
   input[type=text]{flex:1;min-width:0;padding:8px;border-radius:6px;border:2px solid var(--edge);background:#141a30;color:#fff;font-size:15px}
   button{font-family:'Press Start 2P',monospace;font-size:9px;padding:9px 10px;border-radius:6px;border:2px solid #000;background:#e8ecf8;color:var(--ink);box-shadow:0 3px 0 #000;cursor:pointer}
   button:active{transform:translateY(2px);box-shadow:0 1px 0 #000}
@@ -32,21 +33,51 @@
   .row{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:13px;flex-wrap:wrap}
   .row input[type=range]{flex:1}
   .row output{font-family:'Press Start 2P',monospace;font-size:10px;width:28px;text-align:right}
+  .progress{display:none;height:14px;margin-top:10px;background:#141a30;border:2px solid #000;border-radius:4px;overflow:hidden}
+  .progress .fill{height:100%;width:0;transition:width .25s;background:repeating-linear-gradient(-45deg,var(--accent) 0 6px,#f8c870 6px 12px);background-size:17px 17px;animation:stripes .8s linear infinite}
+  @keyframes stripes{to{background-position:17px 0}}
+  @media (prefers-reduced-motion: reduce){.progress .fill{animation:none}}
   #status{font-size:12px;min-height:1.2em;color:#ffe;opacity:.85;margin-top:6px}
   .ds{position:relative;background:#000;padding:8px;border-radius:8px;border:3px solid #586898}
+  .titlebar{display:flex;align-items:center;justify-content:space-between;gap:8px;background:linear-gradient(#5868a8,#3c4880);
+    border:3px solid #000;border-bottom:none;border-radius:8px 8px 0 0;padding:7px 10px;color:#fff;font-size:11px;letter-spacing:2px;text-shadow:2px 2px 0 #000;cursor:pointer}
+  .titlebar small{font-family:system-ui,sans-serif;font-size:11px;letter-spacing:0;opacity:.75;text-shadow:none}
+  .titlebar + .ds{border-radius:0 0 8px 8px}
+  details.list{margin-top:12px;background:#1e2848;border:2px solid var(--edge);border-radius:8px;padding:6px 10px}
+  details.list summary{cursor:pointer;font-size:9px;padding:6px 0}
+  .list table{width:100%;border-collapse:collapse;font-size:13px}
+  .list td{padding:5px 4px;border-top:1px solid #2e3a66;vertical-align:middle}
+  .list tr.item{cursor:pointer}
+  .list tr.item:hover, .list tr.sel{background:#2e3a66}
+  .list .k{width:18px;text-align:center}
+  .list .ed{width:34px;text-align:right}
+  .list .ed button{font-size:8px;padding:4px 6px}
+  .list h4{font-size:8px;margin:10px 0 2px;color:#b8c4f0}
+  #shareOut{width:100%;margin-top:6px;font-size:12px;display:none}
+  .leaflet-overlay-pane canvas.townOverlay{image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none;transform-origin:0 0;position:absolute;left:0;top:0}
   .popup{position:absolute;top:14px;left:14px;max-width:62%;display:none;pointer-events:none;
     background:#f8f8f8;color:#303848;border:3px solid #485878;outline:2px solid #f8f8f8;border-radius:4px;
     box-shadow:inset 0 -3px 0 #c8d0e0, 0 2px 0 #0006;padding:7px 9px 8px;font-size:9px;line-height:1.3;text-transform:uppercase}
   .popup.right{left:auto;right:14px}
+  .popup.enter{animation:popIn .18s ease-out}
+  body[data-theme=night] .titlebar{background:linear-gradient(#283058,#141a38)}
+  body[data-theme=poketch] .titlebar{background:linear-gradient(#5a8a48,#2e5a30)}
+  body[data-theme=sepia] .titlebar{background:linear-gradient(#8a6a44,#5a4026)}
+  @keyframes popIn{from{transform:translateY(-6px);opacity:0}to{transform:none;opacity:1}}
+  @media (prefers-reduced-motion: reduce){.popup.enter{animation:none}}
   .popup small{display:block;font-size:7px;color:#6878a0;margin-top:5px}
   .dpad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,36px);gap:4px;justify-content:center;margin-top:10px}
   .dpad button{padding:0;font-size:12px}
   #region{width:100%;display:block;image-rendering:pixelated;image-rendering:crisp-edges;aspect-ratio:28/15;touch-action:none;background:#3098c0}
   .textbox{background:#f8f8f8;color:var(--ink);border:4px solid #586898;outline:3px solid #fff;border-radius:6px;padding:10px 12px;margin-top:12px;min-height:70px;font-size:10px;line-height:1.8}
   .textbox small{font-family:system-ui,sans-serif;font-size:12px;opacity:.75;line-height:1.4;display:block;margin-top:4px}
+  .textbox .wiki{font-family:system-ui,sans-serif;font-size:12.5px;line-height:1.45;margin-top:8px;padding-top:7px;border-top:1px dashed #b8c0d8}
+  .textbox .wiki a{color:#3050a0}
+  .textbox svg.profile{display:block;width:100%;height:58px;margin-top:6px}
   .tools,.actions,#infoActions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
   #infoActions button{font-size:8px;padding:7px 8px}
   .hint{font-size:12px;opacity:.7;margin-top:8px}
+  #importBtn,#shareBtn,#shareOut,#pngBtn,#pngRawBtn,#jsonBtn{display:none!important}
   .dlg{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
   .dlgBox{width:100%;max-width:360px}
 </style>
@@ -55,21 +86,42 @@
 <main>
   <header>
     <h1 class="pixel">REGION MAP FORGE</h1>
-    <p>Gen 4-style Town Map on Emerald's 28×15 grid — mobile demo.</p>
+    <p>Mobile demo: fictional regions, generated in your browser. For real places, open the <a href="https://ajdur96.github.io/poke-region-map/" style="color:var(--accent)">full version</a>.</p>
   </header>
 
   <section class="card">
-    <div class="label pixel">1 · DEMO REGION</div>
-    <p class="hint" style="margin-top:0">Mobile demo: this version invents a fictional region (coastline, mountains, lakes, rivers) because hosted pages can't reach live map data. The real-world version is the HTML file.</p>
+    <div class="label pixel">1 · NEW REGION</div>
+    <div style="display:none" class="search">
+      <input type="text" id="searchBox" placeholder="Search a place (e.g. Salt Lake City)">
+      <button id="searchBtn">GO</button>
+    </div>
+    <div style="display:none" id="mapWrap"><div id="map"></div><div id="frame"><span class="pixel">28×15</span></div></div>
+    <div style="display:none" class="row">Rotate
+      <button id="rotL" title="Rotate frame 15° counter-clockwise">⟲ 15°</button>
+      <output id="rotOut" class="pixel" style="width:44px;text-align:center">0°</output>
+      <button id="rotR" title="Rotate frame 15° clockwise">15° ⟳</button>
+      <button id="rotReset" title="Point the frame north again">N↑</button>
+    </div>
+    <div style="display:none" class="row">km per square
+      <input type="number" id="kmSq" min="0.112" step="0.01" inputmode="decimal">
+      <button id="kmSet">SET</button>
+    </div>
+    <div class="hint" id="scaleInfo" style="display:none"></div>
+    <div class="row" style="display:none">
+      <label><input type="checkbox" id="overlayOn"> Show town map on the real map</label>
+      <input type="range" id="overlayOpacity" min="10" max="100" value="60" title="Overlay opacity" style="max-width:140px">
+    </div>
     <div class="row">Towns <input type="range" id="townCount" min="3" max="16" value="10"><output id="townOut">10</output></div>
     <div class="row">Extra routes <input type="range" id="extraCount" min="0" max="6" value="2"><output id="extraOut">2</output></div>
     <div class="row"><label><input type="checkbox" id="landmarks" checked> Blue landmarks along routes</label></div>
     <button class="primary" id="forgeBtn">NEW REGION ▶</button>
+    <div class="progress" id="progress"><div class="fill" id="progressFill"></div></div>
     <div id="status"></div>
   </section>
 
   <section class="card" id="townMapCard">
     <div class="label pixel">2 · TOWN MAP</div>
+    <div class="titlebar pixel" id="titleBar" title="Tap to rename the region"><span id="regionTitle">REGION</span><small>✎ rename</small></div>
     <div class="ds"><canvas id="region" width="224" height="120"></canvas><div class="popup pixel" id="popup"></div></div>
     <div class="dpad">
       <span></span><button data-move="0,-1">▲</button><span></span>
@@ -78,8 +130,13 @@
     </div>
     <div class="row">
       <label><input type="checkbox" id="showGrid"> Emerald grid</label>
-      <input type="checkbox" id="showRoads" hidden>
       <label><input type="checkbox" id="showRivers" checked> Rivers</label>
+      <label><input type="checkbox" id="showClouds" checked> Clouds</label>
+      <label>Theme <select id="theme" style="font-size:13px;padding:3px;border-radius:5px">
+        <option value="day">Day</option><option value="night">Night</option><option value="live">Live (real sunlight)</option>
+        <option value="poketch">Pokétch</option><option value="sepia">Sepia</option></select></label>
+      <span class="hint" id="themeInfo" style="margin:0"></span>
+      <label><input type="checkbox" id="flavorNames"> Pokémon-style route names</label>
     </div>
     <div class="textbox pixel" id="infoBox"></div>
     <div id="infoActions"></div>
@@ -96,14 +153,55 @@
       <input type="range" id="bendy" min="0" max="100" value="50">
       bendy <output id="bendyOut" style="width:auto;font-size:8px">BALANCED</output>
     </div>
-    <div class="actions"><button id="rerouteBtn">RE-ROUTE</button></div>
+    <div class="actions">
+      <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶ UNDO</button>
+      <button id="redoBtn" title="Redo (Ctrl+Y or Ctrl+Shift+Z)" disabled>↷ REDO</button>
+      <button id="importBtn" title="Open a regionMap.json you exported">IMPORT JSON</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+      <span class="hint" id="saveState" style="margin:0;align-self:center"></span>
+    </div>
+    <div class="actions">
+      <button id="rerollBtn" title="Same area, different towns and landmarks (locked ones stay)">🎲 REROLL</button>
+      <button id="rerouteBtn">RE-ROUTE</button>
+      <button id="pngBtn" title="Map with title, legend, scale bar and north arrow">EXPORT PNG</button>
+      <button id="pngRawBtn" title="Just the map, 4× size, for game assets">MAP-ONLY PNG</button>
+      <button id="jsonBtn">EXPORT JSON</button>
+    </div>
     <div class="hint" id="toolHint"></div>
+    <div class="actions">
+      <button id="shareBtn" title="Copy a link that rebuilds this region">🔗 SHARE LINK</button>
+    </div>
+    <input type="text" id="shareOut" readonly>
+    <details class="list" id="listPanel"><summary class="pixel" id="listSummary">TOWNS &amp; ROUTES</summary><div id="listBody"></div></details>
   </section>
+  <p class="hint" style="text-align:center">A fictional region made in your browser. Same editor as the full version, minus the real-world data.</p>
 </main>
 <div class="dlg" id="dlg"><div class="textbox pixel dlgBox"><div id="dlgLabel"></div>
   <input type="text" id="dlgInput" style="width:100%;margin:10px 0;color:#000;background:#fff;border-color:#586898">
   <div class="actions"><button class="primary" id="dlgOk">OK</button><button id="dlgCancel">CANCEL</button></div></div></div>
 
+<script>
+// Offline stand-in for Leaflet. The hosted demo can't load libraries or map tiles from other sites,
+// and the editor only needs Leaflet's Web-Mercator maths, so this provides just that.
+(() => {
+  const P = (lat, lng, z) => { const s = 256*2**z, si = Math.sin(lat*Math.PI/180);
+    return { x:(lng + 180)/360*s, y:(0.5 - Math.log((1 + si)/(1 - si))/(4*Math.PI))*s }; };
+  const U = (x, y, z) => { const s = 256*2**z; return { lat:Math.atan(Math.sinh(Math.PI*(1 - 2*y/s)))*180/Math.PI, lng:x/s*360 - 180 }; };
+  const LL = a => Array.isArray(a) ? { lat:a[0], lng:a[1] } : a;
+  const map = {
+    c:{ lat:40, lng:0 }, z:8,
+    setView(c, z){ this.c = LL(c); if (Number.isFinite(z)) this.z = z; return this; },
+    setZoom(z){ if (Number.isFinite(z)) this.z = z; return this; },
+    getCenter(){ return this.c; }, getZoom(){ return this.z; },
+    on(){ return this; }, setMinZoom(){}, setMaxZoom(){}, invalidateSize(){}, fitBounds(){},
+    project(ll, z){ ll = LL(ll); return P(ll.lat, ll.lng, z ?? this.z); },
+    unproject(p, z){ return Array.isArray(p) ? U(p[0], p[1], z ?? this.z) : U(p.x, p.y, z ?? this.z); },
+    containerPointToLatLng(p){ const c = P(this.c.lat, this.c.lng, this.z); return U(c.x + (p.x ?? p[0]), c.y + (p.y ?? p[1]), this.z); },
+    latLngToLayerPoint(){ return { x:0, y:0 }; }, getPanes(){ return { overlayPane:document.createElement('div') }; }
+  };
+  window.L = { map:() => map, tileLayer:() => ({ addTo(){} }), latLng:(a, b) => ({ lat:a, lng:b }), point:(x, y) => ({ x, y }) };
+})();
+</script>
 <script>
 // ===== Grid constants =====
 // Emerald's region map is 28x15 squares of 8x8 px. Each square is split into 4x4
@@ -145,6 +243,77 @@ const state = { terrain:null, elev:null, lake:null, sq:null, sqElev:null,
   roadSq:new Float32Array(MW*MH), roadEdges:new Set(), river:null, riverNames:new Map(), gen:null, towns:[], routes:[],
   startId:null, sel:null, cursor:{x:0, y:0}, tool:'inspect', linkFrom:null, nextId:1, seed:0, ver:0, notes:[] };
 
+// ===== Leaflet map + rotatable 28:15 frame + exact scale =====
+// Scale is set as km per grid square. The floor matches 1:50,000 for the 224-px-wide town map at the
+// OGC standard 0.28 mm per pixel (the same convention GIS servers use). No ceiling: zoom out as far as the map goes.
+const KPS_MIN = 0.112;
+const RF_PER_KPS = 1000*MW/(MW*TILE*0.00028);           // km/square × this = scale denominator (≈ 446,429)
+const map = L.map('map', { zoomSnap:0, zoomDelta:0.5, wheelPxPerZoomLevel:120 }).setView([40.6, -111.8], 8);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:17, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
+const frameEl = document.getElementById('frame');
+let rot = 0;                                              // frame rotation, degrees clockwise
+// Largest 28:15 frame that still fits on screen once rotated
+function frameSizePx(){
+  const wrap = document.getElementById('mapWrap'), W = wrap.clientWidth, H = wrap.clientHeight;
+  const th = rot*Math.PI/180, c = Math.abs(Math.cos(th)), sn = Math.abs(Math.sin(th));
+  const k = Math.min(W*0.92/(MW*c + MH*sn), H*0.85/(MW*sn + MH*c));
+  return { fw:k*MW, fh:k*MH, W, H };
+}
+function placeFrame(){
+  const { fw, fh, W, H } = frameSizePx();
+  Object.assign(frameEl.style, { width:fw+'px', height:fh+'px', left:(W-fw)/2+'px', top:(H-fh)/2+'px', transform:`rotate(${rot}deg)` });
+}
+const mppAt = z => 40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*2**z);   // web-mercator metres per pixel
+const currentKps = () => mppAt(map.getZoom())*frameSizePx().fw/MW/1000;
+function zoomForKps(k){
+  const mpp = k*1000*MW/frameSizePx().fw;
+  return Math.log2(40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*mpp));
+}
+let limits = [null, null];
+function updateZoomLimits(){                              // hard stop at 1:50,000 (zoomed in); zoom out freely
+  const lo = 0, hi = Math.min(17, zoomForKps(KPS_MIN));
+  if (limits[0] === null || Math.abs(lo - limits[0]) > 0.01 || Math.abs(hi - limits[1]) > 0.01){
+    limits = [lo, hi]; map.setMinZoom(lo); map.setMaxZoom(hi);
+  }
+}
+function updateScaleReadout(){
+  const k = currentKps(), box = document.getElementById('kmSq');
+  if (document.activeElement !== box) box.value = k < 1 ? k.toFixed(3) : k.toFixed(2);
+  const km = v => v < 10 ? v.toFixed(1) : Math.round(v);
+  document.getElementById('scaleInfo').textContent =
+    `Frame ${km(k*MW)} × ${km(k*MH)} km · ≈ 1:${Math.round(k*RF_PER_KPS).toLocaleString()} · minimum 0.112 km/square`;
+}
+function setKps(k){
+  k = Math.max(KPS_MIN, k);
+  updateZoomLimits(); map.setZoom(zoomForKps(k), { animate:false }); updateScaleReadout();
+}
+function setRot(r){
+  const k = currentKps();                                 // rotating keeps the chosen km per square
+  rot = ((r % 360) + 360) % 360;
+  placeFrame(); setKps(k);
+  document.getElementById('rotOut').textContent = rot + '°';
+}
+map.on('zoomend moveend', () => { updateZoomLimits(); updateScaleReadout(); });
+window.addEventListener('resize', () => { placeFrame(); map.invalidateSize(); updateZoomLimits(); updateScaleReadout(); });
+placeFrame();
+document.getElementById('rotL').onclick = () => setRot(rot - 15);
+document.getElementById('rotR').onclick = () => setRot(rot + 15);
+document.getElementById('rotReset').onclick = () => setRot(0);
+document.getElementById('kmSet').onclick = () => { const v = parseFloat(document.getElementById('kmSq').value); if (v > 0) setKps(v); };
+document.getElementById('kmSq').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); document.getElementById('kmSet').click(); } });
+updateZoomLimits(); updateScaleReadout();
+
+// The frame's corners (possibly rotated) plus the lat/lon box around them, for data downloads.
+function frameBounds(){
+  const { fw, fh, W, H } = frameSizePx(), th = rot*Math.PI/180, c = Math.cos(th), sn = Math.sin(th);
+  const pt = (u, v) => { const x = (u-.5)*fw, y = (v-.5)*fh; return L.point(W/2 + x*c - y*sn, H/2 + x*sn + y*c); };
+  const [tl, tr, bl, br] = [pt(0,0), pt(1,0), pt(0,1), pt(1,1)].map(p => map.containerPointToLatLng(p));
+  const lats = [tl, tr, bl, br].map(p => p.lat), lngs = [tl, tr, bl, br].map(p => p.lng);
+  const k = currentKps(), mid = map.containerPointToLatLng(L.point(W/2, H/2));   // exact centre (≠ corner average in Mercator)
+  return { n:Math.max(...lats), s:Math.min(...lats), e:Math.max(...lngs), w:Math.min(...lngs),
+           corners:{ tl, tr, bl, br }, center:{ lat:mid.lat, lng:mid.lng }, rot, kmPerSquare:+k.toFixed(6), wKm:k*MW, hKm:k*MH };
+}
+
 // ===== Helpers =====
 const $ = id => document.getElementById(id);
 const setStatus = msg => $('status').textContent = msg;
@@ -167,9 +336,14 @@ const newId = () => state.nextId++;
 const footprint = (t, x = t.x, y = t.y, dir = t.dir) =>
   t.kind === 'city' && t.size === 2 ? (dir === 'v' ? [{x, y}, {x, y:y+1}] : [{x, y}, {x:x+1, y}]) : [{x, y}];
 const occupiedIn = (list, x, y, except) => list.find(o => o !== except && footprint(o).some(f => f.x === x && f.y === y));
-// Try to grow a city to 2 squares around its current square. strict = only on flat land.
+// Towns and cities keep at least two empty squares between them (Chebyshev distance ≥ 3 between footprints),
+// so every pair has room for a route. Landmarks are exempt: notable ones may sit right beside a town.
+const TOWN_GAP = 3;
+const gapOK = (sq, list, except) => list.every(o => o === except || o.kind === 'landmark' || footprint(o).every(f => cheb(f, sq) >= TOWN_GAP));
+// Try to grow a city to 2 squares around its current square. strict = only on flat land, keeping the town gap.
 function makeBig(t, list, strict, onlyDir){
-  const good = (x, y) => inSq(x, y) && !occupiedIn(list, x, y, t) && (!strict || (sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain'));
+  const good = (x, y) => inSq(x, y) && !occupiedIn(list, x, y, t) &&
+    (!strict || (sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain' && gapOK({ x, y }, list, t)));
   const opts = [[0,0,'h'], [-1,0,'h'], [0,0,'v'], [0,-1,'v']].filter(o => !onlyDir || o[2] === onlyDir);
   for (const [dx, dy, dir] of opts){
     const fp = footprint({ kind:'city', size:2 }, t.x+dx, t.y+dy, dir);
@@ -178,13 +352,21 @@ function makeBig(t, list, strict, onlyDir){
   return false;
 }
 
+// Grid ↔ world: one affine transform in web-mercator pixels at zoom z.
+// Origin o = frame's top-left corner; ex / ey = one grid square along the frame's (rotated) x / y axes.
+function makeGen(b, z){
+  const o = map.project(b.corners.tl, z), tr = map.project(b.corners.tr, z), bl = map.project(b.corners.bl, z);
+  const ex = { x:(tr.x - o.x)/MW, y:(tr.y - o.y)/MW }, ey = { x:(bl.x - o.x)/MH, y:(bl.y - o.y)/MH };
+  return { z, o, ex, ey, det:ex.x*ey.y - ex.y*ey.x, b };
+}
+const gridToPx = (g, u, v) => ({ x:g.o.x + u*g.ex.x + v*g.ey.x, y:g.o.y + u*g.ex.y + v*g.ey.y });
 function toSqF(lat, lng){            // fractional square coords
-  const g = state.gen, p = map.project([lat, lng], g.z);
-  return { x:(p.x - g.p1.x)/g.pw*MW, y:(p.y - g.p1.y)/g.ph*MH };
+  const g = state.gen, p = map.project([lat, lng], g.z), dx = p.x - g.o.x, dy = p.y - g.o.y;
+  return { x:(dx*g.ey.y - dy*g.ey.x)/g.det, y:(g.ex.x*dy - g.ex.y*dx)/g.det };
 }
 function toLatLng(x, y){              // square centre → lat/lng
-  const g = state.gen;
-  return map.unproject([g.p1.x + (x+.5)/MW*g.pw, g.p1.y + (y+.5)/MH*g.ph], g.z);
+  const g = state.gen, p = gridToPx(g, x+.5, y+.5);
+  return map.unproject([p.x, p.y], g.z);
 }
 
 // ===== Tile mosaics (OSM for water, Terrarium for elevation) =====
@@ -197,7 +379,7 @@ function loadImg(url){
     img.src = url;
   });
 }
-async function fetchMosaic(b, urlFn, minW, maxW, maxZ){
+async function fetchMosaic(b, urlFn, minW, maxW, maxZ, tracker){
   const nw = L.latLng(b.n, b.w), se = L.latLng(b.s, b.e);
   const widthAt = z => map.project(se, z).x - map.project(nw, z).x;
   let z = Math.min(maxZ, Math.round(map.getZoom()));
@@ -213,7 +395,9 @@ async function fetchMosaic(b, urlFn, minW, maxW, maxZ){
     for (let ty = Math.floor(p1.y/256); ty <= Math.floor(p2.y/256); ty++){
       if (ty < 0 || ty >= N) continue;
       const wx = ((tx % N) + N) % N;
-      jobs.push(loadImg(urlFn(z, wx, ty)).then(img => { octx.drawImage(img, tx*256 - p1.x, ty*256 - p1.y); ok++; }));
+      if (tracker) tracker.total++;
+      jobs.push(loadImg(urlFn(z, wx, ty)).then(img => { octx.drawImage(img, tx*256 - p1.x, ty*256 - p1.y); ok++; })
+        .finally(() => { if (tracker){ tracker.done++; tracker.onTick(); } }));
     }
   await Promise.allSettled(jobs);
   let data = null;
@@ -222,17 +406,20 @@ async function fetchMosaic(b, urlFn, minW, maxW, maxZ){
 }
 
 // Average a function over the mosaic pixels that fall inside sub-cell (sx, sy)
+// (4×4 sample points per sub-cell, placed along the rotated grid, read from the mosaic's own zoom level)
 function sampleSub(m, sx, sy, fn){
-  const cw = m.pw/SW, ch = m.ph/SH, step = Math.max(1, Math.floor(Math.min(cw, ch)/3));
+  const g = state.gen, f = 2 ** (m.z - g.z), K = 4;
   let sum = 0, n = 0;
-  for (let y = Math.floor(sy*ch); y < Math.min(m.ph, Math.ceil((sy+1)*ch)); y += step)
-    for (let x = Math.floor(sx*cw); x < Math.min(m.pw, Math.ceil((sx+1)*cw)); x += step){
-      const i = (y*m.pw + x)*4; sum += fn(m.data[i], m.data[i+1], m.data[i+2], m.data[i+3]); n++;
-    }
+  for (let j = 0; j < K; j++) for (let i = 0; i < K; i++){
+    const p = gridToPx(g, (sx + (i+.5)/K)/SUB, (sy + (j+.5)/K)/SUB);
+    const x = Math.floor(p.x*f - m.p1.x), y = Math.floor(p.y*f - m.p1.y);
+    if (x < 0 || y < 0 || x >= m.pw || y >= m.ph) continue;
+    const k = (y*m.pw + x)*4; sum += fn(m.data[k], m.data[k+1], m.data[k+2], m.data[k+3]); n++;
+  }
   return n ? sum/n : 0;
 }
 
-function buildTerrain(osm, dem){
+function buildTerrain(osm, dem, lakes = []){
   const terr = new Uint8Array(SW*SH).fill(T.LAND);
   const elev = dem.data ? new Float32Array(SW*SH) : null;
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
@@ -243,6 +430,7 @@ function buildTerrain(osm, dem){
     if (elev) elev[i] = sampleSub(dem, sx, sy, (r, g, b) => r*256 + g + b/256 - 32768);
     if (blue > 0.5 || (elev && elev[i] < -3)) terr[i] = T.SEA;
   }
+  if (!osm.data && lakes.length) paintLakes(terr, lakes);
   // Remove specks: flip sub-cells that disagree with 7+ of 8 neighbours
   const copy = terr.slice();
   for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
@@ -303,39 +491,197 @@ function derive(){
 }
 
 // ===== Overpass (OpenStreetMap) queries: towns + roads =====
-async function overpass(q){
-  for (const url of ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']){
+// Read a response body chunk by chunk so the loading bar can show how much has arrived.
+async function readJson(res, onBytes){
+  if (!onBytes || !res.body || !res.body.getReader) return res.json();
+  const reader = res.body.getReader(), chunks = []; let n = 0;
+  for (;;){
+    const { done, value } = await reader.read(); if (done) break;
+    chunks.push(value); n += value.length; onBytes(value.length);
+  }
+  const buf = new Uint8Array(n); let o = 0;
+  for (const c of chunks){ buf.set(c, o); o += c.length; }
+  return JSON.parse(new TextDecoder().decode(buf));
+}
+// ===== Bundled map data: Natural Earth + GeoNames, pre-cut into 10° tiles (see tools/build_static_data.py) =====
+// Served from this site, so it's fast and never rate-limited. Overpass only adds extra detail on top.
+const STATIC_DIR = 'data/ne/';
+let staticIndex = null;
+function decodeLine(enc){                       // 1/1000° delta-encoded ints → [{lat, lon}]
+  const pts = []; let x = 0, y = 0;
+  for (let i = 0; i < enc.length; i += 2){ x += enc[i]; y += enc[i+1]; pts.push({ lon:x/1000, lat:y/1000 }); }
+  return pts;
+}
+async function loadStatic(b, onBytes, tracker){
+  if (!staticIndex){
+    const r = await fetch(STATIC_DIR + 'index.json');
+    if (!r.ok) throw new Error('no bundled data');
+    staticIndex = new Set(await r.json());
+  }
+  const keys = [];
+  for (let tx = Math.floor(b.w/10); tx <= Math.floor(b.e/10); tx++)
+    for (let ty = Math.floor(b.s/10); ty <= Math.floor(b.n/10); ty++)
+      if (staticIndex.has(`${tx}_${ty}`)) keys.push(`${tx}_${ty}`);
+  if (tracker) tracker.total += keys.length;
+  const tiles = await Promise.all(keys.map(k => fetch(STATIC_DIR + k + '.json')
+    .then(r => r.ok ? readJson(r, onBytes) : null)
+    .finally(() => { if (tracker){ tracker.done++; tracker.onTick(); } })));
+  const out = { roads:[], rivers:[], lakes:[], places:[], peaks:[], seas:[], regions:[] }, seen = new Set();
+  const m = 0.2;                                 // keep features slightly outside the frame so edges connect
+  const nearFrame = pts => pts.some(p => p.lat > b.s - m && p.lat < b.n + m && p.lon > b.w - m && p.lon < b.e + m);
+  for (const t of tiles){
+    if (!t) continue;
+    for (const layer of ['roads', 'rivers', 'lakes'])
+      for (const row of t[layer]){
+        const [id, attr] = row, enc = row[row.length-1], label = layer === 'roads' ? row[2] : '';
+        const key = layer + id; if (seen.has(key)) continue; seen.add(key);   // a feature can sit in several tiles
+        const pts = decodeLine(enc);
+        if (nearFrame(pts)) out[layer].push({ id, attr, label, pts });
+      }
+    for (const [name, enc] of (t.seas || [])){ const pts = decodeLine(enc); if (nearFrame(pts)) out.seas.push({ name, pts }); }
+    for (const [name, kind, enc] of (t.regions || [])){ const pts = decodeLine(enc); if (nearFrame(pts)) out.regions.push({ name, kind, pts }); }
+    for (const [name, lat, lon, pop, cap] of t.places)
+      if (lat > b.s && lat < b.n && lon > b.w && lon < b.e) out.places.push({ name, lat, lon, pop, cap });
+    for (const [name, lat, lon, ele] of t.peaks)
+      if (lat > b.s && lat < b.n && lon > b.w && lon < b.e) out.peaks.push({ name, lat, lon, ele });
+  }
+  return out;
+}
+// Reshape bundled data into the same forms the Overpass code produced, so the rest of the app is unchanged.
+function staticToApp(st, b){
+  const { minCls } = roadTier(b);
+  const roads = st.roads.filter(r => r.attr >= minCls)
+    .map(r => ({ tags:{ highway: r.attr === 3 ? 'motorway' : r.attr === 2 ? 'trunk' : 'primary', ref:r.label }, geometry:r.pts }));
+  const rivers = st.rivers.map(r => ({ id:r.id, tags:{ waterway:'river', ...(r.attr ? { name:r.attr } : {}) }, geometry:r.pts }));
+  const places = st.places.map(p => ({ name:p.name, lat:p.lat, lon:p.lon, pop:p.pop, capital:p.cap,
+    place: p.pop >= 100000 ? 'city' : p.pop > 0 ? 'town' : 'village' }));   // pop 0 = GeoNames town (> 1000 people)
+  const landmarks = [
+    ...st.peaks.map(p => ({ name:p.name, lat:p.lat, lon:p.lon, score:1 + p.ele/1000, natural:true })),
+    ...st.lakes.filter(l => l.attr).map(l => {
+      const c = l.pts.reduce((a, p) => ({ lat:a.lat + p.lat/l.pts.length, lon:a.lon + p.lon/l.pts.length }), { lat:0, lon:0 });
+      return { name:l.attr, lat:c.lat, lon:c.lon, score:1.5, natural:true };
+    }).filter(l => l.lat > b.s && l.lat < b.n && l.lon > b.w && l.lon < b.e)
+  ];
+  return { roads, rivers, places, landmarks, lakes:st.lakes.map(l => l.pts),
+           named:{ lakes:st.lakes.filter(l => l.attr).map(l => ({ name:l.attr, pts:l.pts })), seas:st.seas, regions:st.regions,
+                   peaks:st.peaks.map(p => ({ name:p.name, lat:p.lat, lon:p.lon })) } };
+}
+// Fill bundled lake outlines into the terrain (used when the OSM map tiles couldn't be read)
+function paintLakes(terr, lakes){
+  for (const poly of lakes){
+    const pts = poly.map(p => { const f = toSqF(p.lat, p.lon); return { x:f.x*SUB, y:f.y*SUB }; });
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const x0 = Math.max(0, Math.floor(Math.min(...xs))), x1 = Math.min(SW-1, Math.ceil(Math.max(...xs)));
+    const y0 = Math.max(0, Math.floor(Math.min(...ys))), y1 = Math.min(SH-1, Math.ceil(Math.max(...ys)));
+    for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++){
+      const px0 = sx + .5, py0 = sy + .5; let inside = false;          // even-odd ray cast from the cell centre
+      for (let i = 0, j = pts.length-1; i < pts.length; j = i++){
+        const a = pts[i], c = pts[j];
+        if ((a.y > py0) !== (c.y > py0) && px0 < (c.x - a.x)*(py0 - a.y)/(c.y - a.y) + a.x) inside = !inside;
+      }
+      if (inside) terr[sy*SW + sx] = T.SEA;
+    }
+  }
+}
+
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Overpass is now only an optional extra, so it gets a hard deadline instead of minutes of retries.
+async function overpass(q, onBytes, deadline = Date.now() + 15000){
+  for (const url of OVERPASS){
+    const left = deadline - Date.now();
+    if (left < 1500) break;
     try {
-      const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 60000);
+      const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), Math.min(12000, left));
       const res = await fetch(url, { method:'POST', signal:ctrl.signal,
         headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data=' + encodeURIComponent(q) });
       clearTimeout(t);
-      if (res.ok) return await res.json();
+      if (res.ok) return await readJson(res, onBytes);
+      if (res.status === 429 || res.status === 504) await sleep(800);    // busy server: brief pause, then the next mirror
     } catch (e) { /* try next mirror */ }
   }
   throw new Error('Overpass unavailable');
 }
+
+// Real frame size in km (equirectangular at mid-latitude: plenty accurate at region scale)
+function frameKm(b){
+  if (b.wKm) return { w:b.wKm, h:b.hKm };      // true frame size (the lat/lon box is bigger when rotated)
+  const R = 6371, rad = Math.PI/180, lat = (b.n + b.s)/2*rad;
+  return { w:R*Math.cos(lat)*Math.abs(b.e - b.w)*rad, h:R*Math.abs(b.n - b.s)*rad };
+}
 const bboxStr = b => `${b.s},${b.w},${b.n},${b.e}`;
 
-async function fetchPlaces(b, z){
-  const types = z <= 6 ? 'city' : z <= 9 ? 'city|town' : 'city|town|village';
-  const json = await overpass(`[out:json][timeout:30];node["place"~"^(${types})$"]["name"](${bboxStr(b)});out body 400;`);
+// Separate output caps per tier, so a flood of villages can never push cities out of the results,
+// and villages/hamlets are always there to fill sparse areas with real names.
+async function fetchPlaces(b, z, onBytes, deadline){
+  const bb = bboxStr(b);
+  // Zoomed in (frame under 60 km wide) there may be only one or two towns, so neighborhoods
+  // (suburbs, quarters, neighbourhoods) join in as stand-ins. Skipped on wide frames to save download.
+  const hoods = frameKm(b).w < 60
+    ? `node["place"="suburb"]["name"](${bb})->.s; node["place"="quarter"]["name"](${bb})->.q;
+       node["place"="neighbourhood"]["name"](${bb})->.n; .s out body 300; .q out body 200; .n out body 300;` : '';
+  const json = await overpass(`[out:json][timeout:40];
+    node["place"="city"]["name"](${bb})->.c;  node["place"="town"]["name"](${bb})->.t;
+    node["place"="village"]["name"](${bb})->.v; node["place"="hamlet"]["name"](${bb})->.h;
+    .c out body 300; .t out body 600; .v out body 400; .h out body 200; ${hoods}`, onBytes, deadline);
   return json.elements.map(e => ({ name:e.tags['name:en'] || e.tags.name, lat:e.lat, lon:e.lon, place:e.tags.place,
     pop: parseInt(String(e.tags.population || '').replace(/[^0-9]/g, '')) || 0, capital:e.tags.capital }));
 }
 
-async function fetchWays(b, z, withRivers){
-  const cls = z <= 7 ? 'motorway|trunk' : z <= 10 ? 'motorway|trunk|primary' : 'motorway|trunk|primary|secondary';
+// Real landmarks: notable peaks, lakes, parks, attractions, historic sites, lighthouses.
+// "wikidata" acts as a notability filter so we get Mt. Timpanogos, not every unnamed bump.
+async function fetchLandmarks(b, onBytes, deadline){
+  const bb = bboxStr(b);
+  const json = await overpass(`[out:json][timeout:40];(
+    node["natural"~"^(peak|volcano)$"]["name"]["wikidata"](${bb});
+    nwr["natural"="water"]["name"]["wikidata"](${bb});
+    nwr["boundary"~"^(national_park|protected_area)$"]["name"]["wikidata"](${bb});
+    nwr["leisure"="nature_reserve"]["name"]["wikidata"](${bb});
+    nwr["tourism"~"^(attraction|theme_park|zoo)$"]["name"]["wikidata"](${bb});
+    nwr["historic"]["name"]["wikidata"](${bb});
+    nwr["man_made"="lighthouse"]["name"](${bb});
+    nwr["natural"~"^(cave_entrance|glacier|bay|cape|beach|arch)$"]["name"]["wikidata"](${bb});
+  );out center tags 400;`, onBytes, deadline);
+  return json.elements.map(e => {
+    const t = e.tags, lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+    let score = 1, natural = false, kind = '';
+    if (/peak|volcano/.test(t.natural || '')){ score = 1 + (parseFloat(t.ele) || 0)/1000; natural = true; kind = 'peak'; }
+    else if (t.natural === 'water'){ score = 1.5; natural = true; }
+    else if (t.boundary === 'national_park'){ score = 2.5; natural = true; }
+    else if (t.boundary || t.leisure){ score = 1.2; natural = true; }
+    else if (t.man_made === 'lighthouse'){ score = 0.9; }
+    else if (t.historic){ score = 0.8; }
+    else if (t.natural){ natural = true; }
+    return { name:t['name:en'] || t.name, lat, lon, score, natural, kind };
+  }).filter(l => l.name && l.lat != null);
+}
+// Time each download and count its bytes, so the info box can show which one is slow.
+async function timed(name, fn, onBytes){
+  const rec = { s:0, mb:0 }, t0 = Date.now();
+  state.timings[name] = rec;
+  try { return await fn(n => { rec.mb += n/1048576; onBytes(n); }); }
+  finally { rec.s = (Date.now() - t0)/1000; }
+}
+
+// Road detail by frame width. One grid square ≈ width/28, so at 150 km a square is ~5 km:
+// primary roads are finer than the grid can show, yet they're most of the download.
+// Only the top road classes: their shapes are most of the download, and a grid square is
+// kilometres across, so smaller roads add wait time without changing the map much.
+function roadTier(b){
+  const w = frameKm(b).w;
+  // minCls: Natural Earth road class to keep (3 = expressway/major, 2 = secondary highway, 1 = other)
+  if (w >= 150) return { minCls:3, cls:'motorway', riverFilter:'["name"]', label:'major highways' };
+  if (w >= 50)  return { minCls:2, cls:'motorway|trunk', riverFilter:'["name"]', label:'major + secondary highways' };
+  return { minCls:1, cls:'motorway|trunk|primary', riverFilter:'', label:'all mapped roads' };
+}
+async function fetchWays(b, z, withRivers, onBytes){
+  const { cls, riverFilter } = roadTier(b);
   const bb = bboxStr(b);
   const q = withRivers
-    ? `[out:json][timeout:60];(way["highway"~"^(${cls})$"](${bb});way["waterway"="river"](${bb}););out geom;`
+    ? `[out:json][timeout:60];(way["highway"~"^(${cls})$"](${bb});way["waterway"="river"]${riverFilter}(${bb}););out geom;`
     : `[out:json][timeout:50];way["highway"~"^(${cls})$"](${bb});out geom;`;
-  const ways = (await overpass(q)).elements.filter(e => e.geometry && e.tags);
+  const ways = (await overpass(q, onBytes)).elements.filter(e => e.geometry && e.tags);
   return { roads:ways.filter(w => w.tags.highway), rivers:ways.filter(w => w.tags.waterway === 'river'), withRivers };
-}
-async function getWays(b, z){
-  try { return await fetchWays(b, z, true); }
-  catch (e) { return await fetchWays(b, z, false); }   // rivers made it too heavy? keep the roads at least
 }
 
 // Rivers: drawn as thin lines on the terrain sub-grid. Short, unnamed streams are skipped to avoid clutter.
@@ -379,9 +725,13 @@ function ingestRivers(ways){
 // Trace every road through the 28x15 grid, recording which square-to-square steps a real road makes.
 function ingestRoads(ways){
   const W = { motorway:3, trunk:2.5, primary:1.5, secondary:1 };
-  const roadSq = new Float32Array(MW*MH), edges = new Set();
+  const roadSq = new Float32Array(MW*MH), edges = new Set(), edgeName = new Map();
   for (const way of ways){
-    const w = W[way.tags.highway] || 1;
+    const w = W[way.tags.highway] || 1, label = way.tags.ref || way.tags.name || '';
+    const addEdge = (a, b) => {                       // remember the most important named road on each step
+      const k = edgeKey(a, b); edges.add(k);
+      if (label){ const cur = edgeName.get(k); if (!cur || cur.w < w) edgeName.set(k, { name:label.split(';')[0].trim(), w }); }
+    };
     const pts = way.geometry.map(p => toSqF(p.lat, p.lon));
     let cur = null;
     for (let i = 0; i < pts.length-1; i++){
@@ -392,9 +742,9 @@ function ingestRoads(ways){
         const sq = y*MW + x;
         if (cur !== null && sq !== cur){
           const cx = cur % MW, cy = (cur/MW) | 0;
-          if (Math.abs(cx-x) + Math.abs(cy-y) === 1) edges.add(edgeKey(cur, sq));
+          if (Math.abs(cx-x) + Math.abs(cy-y) === 1) addEdge(cur, sq);
           else if (Math.abs(cx-x) === 1 && Math.abs(cy-y) === 1){       // diagonal → two orthogonal steps
-            const mid = cy*MW + x; edges.add(edgeKey(cur, mid)); edges.add(edgeKey(mid, sq));
+            const mid = cy*MW + x; addEdge(cur, mid); addEdge(mid, sq);
           }
         }
         if (sq !== cur) roadSq[sq] += w;
@@ -402,7 +752,7 @@ function ingestRoads(ways){
       }
     }
   }
-  state.roadSq = roadSq; state.roadEdges = edges; pathCache.clear();
+  state.roadSq = roadSq; state.roadEdges = edges; state.roadEdgeName = edgeName; pathCache.clear();
 }
 
 // ===== Town picking =====
@@ -415,40 +765,82 @@ function snapToLand(c){
   return { x:c.x, y:c.y };
 }
 
-function pickTowns(places, count, wantLandmarks){
-  const base = { city:300000, town:30000, village:3000 };
-  const cands = places.filter(p => p.name).map(p => {
+// Seeded random numbers (mulberry32): the same seed always gives the same sequence, so layouts are repeatable.
+function seededRng(seed){
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                 t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0)/4294967296; };
+}
+// opts.variant: 0 = the best-ranked picks; any other number shuffles the ranking a little (a "reroll"), repeatably.
+// opts.locked:  towns/landmarks the user locked; they're kept as-is and the new picks keep their distance from them.
+function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
+  const variant = opts.variant || 0, locked = opts.locked || [];
+  const rng = seededRng((state.seed*7919 + variant*104729) >>> 0);
+  const jitter = variant ? 0.9 : 0;                  // ≈ a 8× population swing, enough for smaller towns to win sometimes
+  const lockedNames = new Set(locked.map(t => t.name));
+  // typical sizes, used only when OSM has no population; neighborhoods rank as filler below villages
+  const base = { city:300000, town:30000, village:3000, suburb:2000, quarter:1000, hamlet:300, neighbourhood:500 };
+  const cands = places.filter(p => p.name && !lockedNames.has(p.name)).map(p => {
     const f = toSqF(p.lat, p.lon); return { ...p, x:Math.floor(f.x), y:Math.floor(f.y) };
   }).filter(c => inSq(c.x, c.y));
   cands.forEach(c => {
-    c.score = Math.log10(Math.max(c.pop, base[c.place] || 1000)) + (['yes','2','4'].includes(c.capital) ? 0.6 : 0)
-            + Math.min(0.3, state.roadSq[c.y*MW+c.x] * 0.05);    // a little boost for being on the road network
+    // real population when OSM has it; the tier's typical size only as a fallback
+    c.score = Math.log10(c.pop || base[c.place] || 1000) + (['yes','2','4'].includes(c.capital) ? 0.6 : 0)
+            + Math.min(0.3, state.roadSq[c.y*MW+c.x] * 0.05)     // a little boost for being on the road network
+            + jitter*rng();
     Object.assign(c, snapToLand(c));
   });
   cands.sort((a, b) => b.score - a.score);
+  // the same name can appear twice (e.g. a city and its "Downtown" suburb share it): keep the higher-ranked one
+  const seen = new Set();
+  for (let i = 0; i < cands.length; i++){                   // sorted best-first, so the first copy wins
+    if (seen.has(cands[i].name)){ cands.splice(i--, 1); continue; }
+    seen.add(cands[i].name);
+  }
 
-  const spacing = Math.max(2.5, Math.sqrt(MW*MH/count) * 0.65);
+  const lockedT = locked.filter(t => t.kind !== 'landmark'), lockedL = locked.filter(t => t.kind === 'landmark');
+  const anchors = lockedT.flatMap(t => footprint(t));      // new towns keep their distance from locked ones
+  const want = Math.max(0, count - lockedT.length);
+  const spacing = Math.max(TOWN_GAP, Math.sqrt(MW*MH/count) * 0.65);
+  const free = c => !locked.some(o => footprint(o).some(f => f.x === c.x && f.y === c.y));
   const chosen = [];
-  for (const c of cands){ if (chosen.length >= count) break; if (chosen.every(o => dist(o, c) >= spacing)) chosen.push(c); }
-  for (const c of cands){ if (chosen.length >= count) break; if (!chosen.includes(c) && chosen.every(o => cheb(o, c) >= 2)) chosen.push(c); }
+  for (const c of cands){ if (chosen.length >= want) break;
+    if (free(c) && chosen.every(o => dist(o, c) >= spacing && cheb(o, c) >= TOWN_GAP) && anchors.every(o => dist(o, c) >= spacing && cheb(o, c) >= TOWN_GAP)) chosen.push(c); }
+  for (const c of cands){ if (chosen.length >= want) break;
+    if (free(c) && !chosen.includes(c) && chosen.every(o => cheb(o, c) >= TOWN_GAP) && anchors.every(o => cheb(o, c) >= TOWN_GAP)) chosen.push(c); }
 
-  const nCities = Math.max(1, Math.round(count/5));
-  const towns = chosen.map((c, i) => ({ id:newId(), name:c.name, x:c.x, y:c.y, kind:i < nCities ? 'city' : 'town', size:1, score:c.score }));
-  // The biggest cities get 2 squares, like Emerald's larger cities
-  towns.filter(t => t.kind === 'city').slice(0, Math.ceil(nCities/2)).forEach(t => makeBig(t, towns, true));
+  const nCities = Math.max(lockedT.length ? 0 : 1, Math.round(count/5) - lockedT.filter(t => t.kind === 'city').length);
+  chosen.sort((a, b) => b.score - a.score);          // city status goes to the biggest, not the first placed
+  const fresh = chosen.map((c, i) => ({ id:newId(), name:c.name, x:c.x, y:c.y, kind:i < nCities ? 'city' : 'town', size:1, score:c.score, lat:c.lat, lon:c.lon }));
+  const towns = [...locked, ...fresh];
+  // The biggest new cities get 2 squares, like Emerald's larger cities
+  fresh.filter(t => t.kind === 'city').slice(0, Math.ceil(nCities/2)).forEach(t => makeBig(t, towns, true));
 
   let tries = 0, k = 1;
-  while (towns.length < count && tries++ < 800){
-    const c = { x:1 + Math.floor(Math.random()*(MW-2)), y:1 + Math.floor(Math.random()*(MH-2)) };
-    if (sqKind(c.x, c.y) === 'water' || !towns.every(o => dist(o, c) >= spacing*0.8)) continue;
+  while (towns.filter(t => t.kind !== 'landmark').length < count && tries++ < 800){
+    const c = { x:1 + Math.floor(rng()*(MW-2)), y:1 + Math.floor(rng()*(MH-2)) };
+    if (sqKind(c.x, c.y) === 'water' || !gapOK(c, towns) || !towns.every(o => footprint(o).every(f => dist(f, c) >= spacing*0.8))) continue;
     towns.push({ id:newId(), name:`Town ${k++}`, x:c.x, y:c.y, kind:'town', size:1, score:0 });
   }
+  if (k > 1) state.notes.push(`Only ${chosen.length + lockedT.length} named places fit this area — added ${k-1} placeholder town${k > 2 ? 's' : ''} ("Town #"). Try fewer towns or a bigger frame.`);
   if (wantLandmarks){
-    const nLm = Math.round(count/2);
+    const nLm = Math.max(lockedL.length, Math.round(count/2));
+    const isLm = () => towns.filter(t => t.kind === 'landmark').length;
+    const taken = new Set(towns.map(t => t.name));
+    // 1) real landmarks first — natural ones (peaks, lakes, parks) stay exactly where they are
+    const lms = landmarks.map(l => { const f = toSqF(l.lat, l.lon); return { ...l, x:Math.floor(f.x), y:Math.floor(f.y), rank:l.score + jitter*rng() }; })
+      .filter(l => inSq(l.x, l.y) && !taken.has(l.name)).sort((a, b) => b.rank - a.rank);
+    for (const l of lms){
+      if (isLm() >= nLm) break;
+      // notable landmarks may sit right next to a town (just not on it); keep landmarks 3 apart from each other
+      if (towns.every(o => footprint(o).every(f => cheb(f, l) >= (o.kind === 'landmark' ? 3 : 1))))
+        towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural, lat:l.lat, lon:l.lon });
+    }
+    // 2) then leftover settlements
     for (const c of cands){
-      if (towns.filter(t => t.kind === 'landmark').length >= nLm) break;
+      if (isLm() >= nLm) break;
       if (!chosen.includes(c) && towns.every(o => footprint(o).every(f => cheb(f, c) >= 2)))
-        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score });
+        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score, lat:c.lat, lon:c.lon });
     }
   }
   return towns;
@@ -572,6 +964,10 @@ function renumber(){
   }
   state.routes.forEach(r => r.num = null);
   if (!start) return;
+  try { numberRoutes(start); } finally { nameRoutes(); }
+}
+// Journey order (used to give the earliest routes first pick of names, and in the export)
+function numberRoutes(start){
   const order = [start.id, ...state.towns.map(t => t.id).filter(id => id !== start.id)];
   const visited = new Set(); let n = 201;
   for (const root of order){
@@ -590,9 +986,149 @@ function renumber(){
   }
 }
 
+// ===== Route names =====
+// Each route is named after the most distinctive real feature it passes, in priority order:
+// roads → rivers → lakes → seas → mountains. Only if none qualify does it fall back to terrain character
+// (using a real landform name like "Great Basin" when the route crosses one).
+function pointInPoly(px, py, pts){
+  let inside = false;
+  for (let i = 0, j = pts.length-1; i < pts.length; j = i++){
+    const a = pts[i], c = pts[j];
+    if ((a.y > py) !== (c.y > py) && px < (c.x - a.x)*(py - a.y)/(c.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+// Which named polygon (if any) covers each grid square's centre
+function polysToSquares(polys, keep = () => true){
+  const out = new Map();
+  for (const poly of polys){
+    const pts = poly.pts.map(p => toSqF(p.lat, p.lon));
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    for (let y = Math.max(0, Math.floor(Math.min(...ys))); y <= Math.min(MH-1, Math.ceil(Math.max(...ys))); y++)
+      for (let x = Math.max(0, Math.floor(Math.min(...xs))); x <= Math.min(MW-1, Math.ceil(Math.max(...xs))); x++)
+        if (!out.has(y*MW + x) && keep(x, y, poly) && pointInPoly(x + .5, y + .5, pts)) out.set(y*MW + x, poly);
+  }
+  return out;
+}
+const titleCase = t => t.replace(/(^|\s)([a-z])/g, (m, a, c) => a + c.toUpperCase());   // "Atlantic coastal plain" → "Atlantic Coastal Plain"
+function computeNameMaps(named, landmarks){
+  const n = named || { lakes:[], seas:[], regions:[], peaks:[] };
+  const water = (x, y) => sqKind(x, y) === 'water';
+  state.names = {
+    lake:  new Map([...polysToSquares(n.lakes)].map(([k, v]) => [k, v.name])),
+    sea:   new Map([...polysToSquares(n.seas, water)].map(([k, v]) => [k, v.name])),
+    range: new Map([...polysToSquares(n.regions.filter(r => r.kind === 'range'))].map(([k, v]) => [k, titleCase(v.name)])),
+    land:  new Map([...polysToSquares(n.regions.filter(r => r.kind !== 'range'))].map(([k, v]) => [k, { ...v, name:titleCase(v.name) }])),
+    peaks: [...n.peaks, ...landmarks.filter(l => l.kind === 'peak')]
+             .map(p => ({ name:p.name, ...toSqF(p.lat, p.lon) })).filter(p => p.x > -2 && p.y > -2 && p.x < MW+2 && p.y < MH+2)
+  };
+}
+
+const ROUTE_TPL = {
+  road:       { plain:['{n} Corridor'],  flavor:['{n} Cycling Road', '{n} Speedway', '{n} Trailway'] },
+  riverAlong: { plain:['{n} Walk'],      flavor:['{b} Riverbank Trail', '{b} Waterside Path', '{b} Rapids Trail'] },
+  riverCross: { plain:['{n} Crossing'],  flavor:['{b} Bridge', '{b} Ford', '{b} Stepping Stones'] },
+  lakeCross:  { plain:['{n} Crossing'],  flavor:['{n} Waterway', '{n} Surf Route', '{n} Mistway'] },
+  lakeShore:  { plain:['{n} Shore'],     flavor:['{n} Lakefront', '{n} Shoreside Path'] },
+  seaCross:   { plain:['{n} Passage'],   flavor:['{n} Seaway', '{n} Surf Route', '{n} Currents'] },
+  seaCoast:   { plain:['{n} Coast'],     flavor:['{n} Beachfront', '{n} Seabreeze Path'] },
+  peak:       { plain:['{n} Pass'],      flavor:['{n} Climb', '{n} Summit Trail'] },
+  range:      { plain:['{n} Pass'],      flavor:['{n} Highpass', '{n} Cliffside Trail'] }
+};
+const TERRAIN_WORDS = {
+  ridge:{ plain:'Ridge',     flavor:['Skyline Ridge', 'Craggy Ridge'] },
+  hills:{ plain:'Foothills', flavor:['Rolling Hills', 'Windy Foothills'] },
+  shore:{ plain:'Shoreline', flavor:['Seabreeze Path', 'Tidepool Trail'] },
+  water:{ plain:'Waters',    flavor:['Open Waters', 'Wavecrest Route'] },
+  flats:{ plain:'Flats',     flavor:['Windswept Flats', 'Sunlit Meadows'] }
+};
+const ROAD_WORDS = /\b(road|highway|freeway|parkway|corridor|expressway|turnpike|way|avenue|street|boulevard|trail)$/i;
+const baseName = n => n.replace(/\s+(river|creek|stream)$/i, '');
+
+function fillTpl(kind, name, pick, flavor){
+  if (kind === 'road' && !flavor && ROAD_WORDS.test(name)) return name;       // "Mountain View Corridor" stays as is
+  const list = ROUTE_TPL[kind][flavor ? 'flavor' : 'plain'];
+  return list[Math.floor(pick*list.length)].replace('{n}', name).replace('{b}', baseName(name));
+}
+
+// Compass direction of a route's middle, relative to the frame centre, in real-world terms (handles rotation)
+function compassOf(sqs){
+  const m = sqs[Math.floor(sqs.length/2)], dx = m.x + .5 - MW/2, dy = m.y + .5 - MH/2;
+  if (Math.hypot(dx, dy) < 3) return 'Central';
+  const th = (state.gen?.b.rot || 0)*Math.PI/180, sx = dx*Math.cos(th) - dy*Math.sin(th), sy = dx*Math.sin(th) + dy*Math.cos(th);
+  return Math.abs(sx) > Math.abs(sy) ? (sx > 0 ? 'East' : 'West') : (sy > 0 ? 'South' : 'North');
+}
+
+function routeCandidates(sqs){
+  const N = state.names, n = sqs.length, idx = s => s.y*MW + s.x, cands = [];
+  const top = counts => Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  // roads: share of the route's steps that run along one named road
+  const rc = {};
+  for (let i = 1; i < n; i++){ const e = state.roadEdgeName?.get(edgeKey(idx(sqs[i-1]), idx(sqs[i]))); if (e) rc[e.name] = (rc[e.name]||0) + 1; }
+  const tr = top(rc); if (tr && tr[1]/Math.max(1, n-1) >= 0.3) cands.push({ kind:'road', name:tr[0], score:tr[1]/(n-1) });
+  // rivers: following one (3+ squares) or just crossing it
+  const rv = {}; sqs.forEach(s => { const nm = state.riverNames.get(idx(s)); if (nm) rv[nm] = (rv[nm]||0) + 1; });
+  const tv = top(rv);
+  if (tv) cands.push(tv[1] >= 3 || tv[1]/n >= 0.3 ? { kind:'riverAlong', name:tv[0], score:Math.max(tv[1]/n, .3)*0.95 }
+                                                  : { kind:'riverCross', name:tv[0], score:0.25*0.95 });
+  if (!N) return cands;
+  // lakes and seas: crossing them (squares on the water) or running along their shore (next to it)
+  const near = (map, s) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+    const x = s.x+dx, y = s.y+dy; if (inSq(x, y) && map.has(y*MW + x)) return map.get(y*MW + x); } return null; };
+  for (const [map, cross, shore, w] of [[N.lake, 'lakeCross', 'lakeShore', 0.9], [N.sea, 'seaCross', 'seaCoast', 0.85]]){
+    const inC = {}, adjC = {};
+    sqs.forEach(s => { const a = map.get(idx(s)); if (a) inC[a] = (inC[a]||0) + 1; else { const b = near(map, s); if (b) adjC[b] = (adjC[b]||0) + 1; } });
+    const ti = top(inC), ta = top(adjC);
+    if (ti && (ti[1] >= 2 || ti[1]/n >= 0.3)) cands.push({ kind:cross, name:ti[0], score:Math.max(ti[1]/n, .3)*w });
+    else if (ta && ta[1] >= 2) cands.push({ kind:shore, name:ta[0], score:Math.max(ta[1]/n, .3)*w*0.9 });
+  }
+  // mountains: high squares near a named peak, or inside a named range
+  const mc = {};
+  sqs.forEach(s => {
+    const k = sqKind(s.x, s.y); if (k !== 'mountain' && k !== 'hill') return;
+    let best = null; for (const p of N.peaks){ const d = Math.hypot(p.x - s.x - .5, p.y - s.y - .5); if (d < 2.5 && (!best || d < best.d)) best = { d, name:p.name }; }
+    const key = best ? 'peak|' + best.name : N.range.has(idx(s)) ? 'range|' + N.range.get(idx(s)) : null;
+    if (key) mc[key] = (mc[key]||0) + 1;
+  });
+  const tm = top(mc);
+  if (tm && (tm[1] >= 2 || n < 6)){ const [kind, name] = tm[0].split('|'); cands.push({ kind, name, score:Math.max(tm[1]/n, .25)*0.8 }); }
+  return cands.sort((a, b) => b.score - a.score);
+}
+
+function terrainName(sqs, pick, flavor){
+  const n = sqs.length, cnt = { ridge:0, hills:0, shore:0, water:0, flats:0 }, land = {};
+  sqs.forEach(s => {
+    const k = sqKind(s.x, s.y);
+    let coastal = false; for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) if (inSq(s.x+dx, s.y+dy) && sqKind(s.x+dx, s.y+dy) === 'water') coastal = true;
+    cnt[k === 'mountain' ? 'ridge' : k === 'hill' ? 'hills' : k === 'water' ? 'water' : coastal ? 'shore' : 'flats']++;
+    const r = state.names?.land.get(s.y*MW + s.x); if (r) land[r.name] = (land[r.name]||0) + 1;
+  });
+  const word = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0], W = TERRAIN_WORDS[word];
+  const w = flavor ? W.flavor[Math.floor(pick*W.flavor.length)] : W.plain;
+  const region = Object.entries(land).sort((a, b) => b[1] - a[1])[0];
+  return region && region[1]/n >= 0.4 ? `${region[0]} ${w}` : `${compassOf(sqs)} ${w}`;
+}
+
+function nameRoutes(){
+  const flavor = $('flavorNames').checked, used = new Set(), paths = routePaths();
+  state.routes.forEach(r => { if (r.custom) used.add(r.name); });
+  const order = state.routes.map((r, i) => i).sort((a, b) => (state.routes[a].num ?? 1e9) - (state.routes[b].num ?? 1e9));
+  for (const i of order){                            // earliest routes in the journey get first pick of names
+    const r = state.routes[i]; if (r.custom) continue;
+    const sqs = paths[i].squares, pick = hash(r.a*31 + 7, r.b*17 + 3);
+    const cands = routeCandidates(sqs).map(c => fillTpl(c.kind, c.name, pick, flavor));
+    // 1) a real feature's name  2) the same, with a compass word when another route already has it  3) terrain
+    let name = cands.find(nm => !used.has(nm)) || cands.map(nm => `${nm} ${compassOf(sqs)}`).find(nm => !used.has(nm))
+               || terrainName(sqs, pick, flavor);
+    const stem = name;
+    for (let k = 2; used.has(name); k++) name = `${stem} ${['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][Math.min(k-2, 8)]}`;
+    r.name = name; used.add(name);
+  }
+}
+
 function snapLandmarks(){
   const cells = routePaths().flatMap(p => p.squares);
-  for (const t of state.towns.filter(t => t.kind === 'landmark')){
+  for (const t of state.towns.filter(t => t.kind === 'landmark' && !t.fixed && !t.locked)){
     let best = null;
     for (const c of cells){
       if (state.towns.some(o => o !== t && footprint(o).some(f => cheb(f, c) < 2))) continue;
@@ -603,7 +1139,7 @@ function snapLandmarks(){
 }
 
 // ===== Rendering =====
-const cv = $('region'), ctx = cv.getContext('2d');
+const cv = $('region'), ctx = cv.getContext('2d', { willReadFrequently:true });   // themes read each frame back
 const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
 const ROUTE_ALPHA = 0.75;                                  // 1 = solid, lower = more terrain shows through
 const routeLayer = document.createElement('canvas'); routeLayer.width = cv.width; routeLayer.height = cv.height;
@@ -627,58 +1163,143 @@ function drawPlaceholder(){
   px(0, 0, cv.width, cv.height, PAL.deep);
   for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) if (hash(x, y) > 0.9) px(x*SP, y*SP+1, 3, 1, PAL.deep2);
   ctx.fillStyle = '#fff'; ctx.font = '8px "Press Start 2P", monospace'; ctx.textAlign = 'center';
-  ctx.fillText('FRAME AN AREA ABOVE', 112, 56); ctx.fillText('THEN PRESS FORGE', 112, 70);
+  if (state.forging){
+    ctx.fillText('FORGING...', 112, 52);
+    px(51, 62, 122, 10, '#000'); px(53, 64, 118, 6, '#283050');
+    px(53, 64, Math.round(118*prog.pct/100), 6, PAL.rFill);
+  } else { ctx.fillText('FRAME AN AREA ABOVE', 112, 56); ctx.fillText('THEN PRESS FORGE', 112, 70); }
 }
 
-function drawTerrain(){
+// ===== Layered rendering =====
+// Static layer: terrain, coastlines, rivers, grid and road overlay; rebuilt only when one of them changes.
+// Route layer: rebuilt only when routes, towns or the selection change. Each animation frame stacks the
+// cached layers and draws just the moving pixels (waves, river flow, clouds, pulse, marching ants, cursor).
+const staticLayer = document.createElement('canvas'); staticLayer.width = cv.width; staticLayer.height = cv.height;
+const sctx = staticLayer.getContext('2d');
+const spx = (x, y, w, h, c) => { sctx.fillStyle = c; sctx.fillRect(x, y, w, h); };
+const objIds = new WeakMap(); let nextObjId = 1;
+const idOf = o => o ? (objIds.get(o) || (objIds.set(o, nextObjId++), nextObjId - 1)) : 0;
+let staticKey = '', routeKey = '';
+const anim = { dashes:[], foam:[], glints:[], clouds:[] };
+
+function buildStatic(){
   const t = state.terrain;
   const toLand = bfsSub(i => t[i] !== T.SEA), toWater = bfsSub(i => t[i] === T.SEA);
   const at = (x, y) => inSub(x, y) ? t[y*SW+x] : -1;
-  const waves = [];   // drawn after the base layer so drifting pixels aren't clipped by neighbours
+  anim.dashes = []; anim.foam = []; anim.glints = [];
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
     const i = sy*SW + sx, X = sx*SP, Y = sy*SP, v = t[i];
     if (v === T.SEA){
-      const d = toLand[i];
-      const h = hash(sx, sy), phase = Math.floor(hash(sy, sx)*64);
+      const d = toLand[i], h = hash(sx, sy), phase = Math.floor(hash(sy, sx)*64);
       if (state.lake[i]){
-        px(X, Y, SP, SP, d <= 1 ? PAL.shallow : PAL.mid);
-        if (d >= 2 && (phase + waveTick) % 40 === 0) waves.push([X, Y, 1, 1, PAL.shallow]);       // lake glint
+        spx(X, Y, SP, SP, d <= 1 ? PAL.shallow : PAL.mid);
+        if (d >= 2) anim.glints.push([X, Y, phase]);                          // lake glint spots
       } else {
-        px(X, Y, SP, SP, d <= 1 ? PAL.shallow : d <= 3 ? PAL.mid : PAL.deep);
-        // open-sea swells: short dashes that sway 0→1→2→1 px
-        if (d >= 4 && h > 0.9) waves.push([X + [0, 1, 2, 1][(waveTick + phase) % 4], Y+1, 3, 1, PAL.deep2]);
-        // shoreline sparkle: a foam pixel blinks on now and then
-        if (d === 1 && (phase + waveTick) % 28 === 0) waves.push([X + (h > .5 ? 1 : 0), Y, 1, 1, PAL.foam]);
+        spx(X, Y, SP, SP, d <= 1 ? PAL.shallow : d <= 3 ? PAL.mid : PAL.deep);
+        if (d >= 4 && h > 0.9) anim.dashes.push([X, Y+1, phase]);             // open-sea swell dashes
+        if (d === 1) anim.foam.push([X + (h > .5 ? 1 : 0), Y, phase]);         // shoreline sparkle spots
       }
     } else if (v === T.LAND){
       const blob = hash(sx >> 3, sy >> 3) > 0.55;
-      px(X, Y, SP, SP, toWater[i] <= 1 ? PAL.land1 : blob ? PAL.land3 : PAL.land2);
+      spx(X, Y, SP, SP, toWater[i] <= 1 ? PAL.land1 : blob ? PAL.land3 : PAL.land2);
     } else if (v === T.HILL){
-      px(X, Y, SP, SP, PAL.hill);
-      if ((sx + sy) % 3 === 0 && hash(sx, sy) > 0.5) px(X, Y, 1, 1, PAL.hillHi);
+      spx(X, Y, SP, SP, PAL.hill);
+      if ((sx + sy) % 3 === 0 && hash(sx, sy) > 0.5) spx(X, Y, 1, 1, PAL.hillHi);
     } else if (v === T.MTN){
-      px(X, Y, SP, SP, PAL.mtn);
-      if (at(sx, sy-1) < T.MTN) px(X, Y, SP, 1, PAL.mtnHi);          // sunlit top edge
-      if (at(sx, sy+1) < T.MTN) px(X, Y+SP-1, SP, 1, PAL.mtnLo);     // shadowed base
-      if (hash(sx, sy) > 0.85) px(X+1, Y, 1, 1, PAL.mtnHi);
+      spx(X, Y, SP, SP, PAL.mtn);
+      if (at(sx, sy-1) < T.MTN) spx(X, Y, SP, 1, PAL.mtnHi);          // sunlit top edge
+      if (at(sx, sy+1) < T.MTN) spx(X, Y+SP-1, SP, 1, PAL.mtnLo);     // shadowed base
+      if (hash(sx, sy) > 0.85) spx(X+1, Y, 1, 1, PAL.mtnHi);
     } else {
-      px(X, Y, SP, SP, PAL.peak);
-      if (at(sx, sy+1) !== T.PEAK) px(X, Y+SP-1, SP, 1, PAL.peakLo);
+      spx(X, Y, SP, SP, PAL.peak);
+      if (at(sx, sy+1) !== T.PEAK) spx(X, Y+SP-1, SP, 1, PAL.peakLo);
     }
   }
-  for (const w of waves) px(...w);
   // coastline: dark green on land, white foam on water
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
     if (t[sy*SW+sx] === T.SEA) continue;
     const X = sx*SP, Y = sy*SP;
-    if (at(sx, sy-1) === T.SEA){ px(X, Y, SP, 1, PAL.landEdge); px(X, Y-1, SP, 1, PAL.foam); }
-    if (at(sx, sy+1) === T.SEA){ px(X, Y+SP-1, SP, 1, PAL.landEdge); px(X, Y+SP, SP, 1, PAL.foam); }
-    if (at(sx-1, sy) === T.SEA){ px(X, Y, 1, SP, PAL.landEdge); px(X-1, Y, 1, SP, PAL.foam); }
-    if (at(sx+1, sy) === T.SEA){ px(X+SP-1, Y, 1, SP, PAL.landEdge); px(X+SP, Y, 1, SP, PAL.foam); }
+    if (at(sx, sy-1) === T.SEA){ spx(X, Y, SP, 1, PAL.landEdge); spx(X, Y-1, SP, 1, PAL.foam); }
+    if (at(sx, sy+1) === T.SEA){ spx(X, Y+SP-1, SP, 1, PAL.landEdge); spx(X, Y+SP, SP, 1, PAL.foam); }
+    if (at(sx-1, sy) === T.SEA){ spx(X, Y, 1, SP, PAL.landEdge); spx(X-1, Y, 1, SP, PAL.foam); }
+    if (at(sx+1, sy) === T.SEA){ spx(X+SP-1, Y, 1, SP, PAL.landEdge); spx(X+SP, Y, 1, SP, PAL.foam); }
   }
-  if (state.river && $('showRivers').checked)
+  const showRivers = state.river && $('showRivers').checked;
+  if (showRivers)
     for (let i = 0; i < SW*SH; i++)
-      if (state.river[i] && t[i] !== T.SEA) px((i % SW)*SP, ((i/SW) | 0)*SP, SP, SP, PAL.river);
+      if (state.river[i] && t[i] !== T.SEA) spx((i % SW)*SP, ((i/SW) | 0)*SP, SP, SP, PAL.river);
+  if ($('showGrid').checked){
+    sctx.fillStyle = 'rgba(0,0,0,.15)';
+    for (let x = 1; x < MW; x++) sctx.fillRect(x*TILE, 0, 1, cv.height);
+    for (let y = 1; y < MH; y++) sctx.fillRect(0, y*TILE, cv.width, 1);
+  }
+  anim.clouds = makeClouds();
+}
+
+// A few soft, blocky cloud shadows (built from overlapping rectangles, filled as one shape)
+function makeClouds(){
+  const rng = seededRng(state.seed*31 + 7), clouds = [];
+  for (let k = 0; k < 4; k++){
+    const w = 24 + Math.floor(rng()*26), h = 10 + Math.floor(rng()*8), rects = [];
+    for (let j = 0; j < 5; j++){
+      const rw = Math.round(w*(0.4 + rng()*0.5)/2)*2, rh = Math.round(h*(0.5 + rng()*0.5)/2)*2;
+      rects.push([Math.round(rng()*(w - rw)/2)*2, Math.round(rng()*(h - rh)/2)*2, rw, rh]);
+    }
+    clouds.push({ x0:rng()*(cv.width + 60), y:Math.floor(rng()*(cv.height - h)), w, rects, speed:0.35 + rng()*0.3 });
+  }
+  return clouds;
+}
+
+function buildRouteLayer(){
+  // routes: outline pass, then fill pass, so crossings merge cleanly; painted solid here and laid over
+  // the terrain at ROUTE_ALPHA in one go (blending each piece separately would darken overlaps)
+  const blocks = [], segs = [];
+  routePaths().forEach((p, ri) => {
+    const sel = state.sel && state.sel.type === 'route' && state.sel.idx === ri;
+    p.squares.forEach((s, k) => {
+      const water = sqKind(s.x, s.y) === 'water';
+      blocks.push({ x:s.x*TILE+4, y:s.y*TILE+4, water, sel });
+      if (k){ const pr = p.squares[k-1];
+        segs.push({ ax:pr.x*TILE+4, ay:pr.y*TILE+4, bx:s.x*TILE+4, by:s.y*TILE+4, water:water && sqKind(pr.x, pr.y) === 'water', sel }); }
+    });
+  });
+  const segRect = (s, pad) => [Math.min(s.ax, s.bx)-pad, Math.min(s.ay, s.by)-pad, Math.abs(s.bx-s.ax)+pad*2, Math.abs(s.by-s.ay)+pad*2];
+  rctx.clearRect(0, 0, routeLayer.width, routeLayer.height);
+  const rpx = (x, y, w, h, c) => { rctx.fillStyle = c; rctx.fillRect(x, y, w, h); };
+  for (const s of segs){ const [x, y, w, h] = segRect(s, 3); rpx(x, y, w, h, s.water ? PAL.sOut : PAL.rOut); }
+  for (const b of blocks) rpx(b.x-3, b.y-3, 6, 6, b.water ? PAL.sOut : PAL.rOut);
+  for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, s.water ? PAL.sFill : PAL.rFill); }
+  for (const b of blocks.filter(b => !b.sel)) rpx(b.x-2, b.y-2, 4, 4, b.water ? PAL.sFill : PAL.rFill);
+  for (const s of segs.filter(s => s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, PAL.rSel); }
+  for (const b of blocks.filter(b => b.sel)) rpx(b.x-2, b.y-2, 4, 4, PAL.rSel);
+}
+
+// --- per-frame animation pieces ---
+function drawWater(){
+  const tk = waveTick;
+  for (const [X, Y, ph] of anim.dashes) px(X + [0, 1, 2, 1][(tk + ph) % 4], Y, 3, 1, PAL.deep2);   // swells sway 0→1→2→1 px
+  for (const [X, Y, ph] of anim.foam) if ((ph + tk) % 28 === 0) px(X, Y, 1, 1, PAL.foam);          // shoreline sparkle
+  for (const [X, Y, ph] of anim.glints) if ((ph + tk) % 40 === 0) px(X, Y, 1, 1, PAL.shallow);    // lake glint
+}
+function drawClouds(){
+  if (!$('showClouds').checked || !anim.clouds.length) return;
+  const th = $('theme').value;
+  if (th === 'night' || (th === 'live' && themeNow.alt < 0)) return;      // no sun, no cloud shadows
+  ctx.fillStyle = 'rgba(10,30,50,.14)'; ctx.beginPath();
+  for (const c of anim.clouds){
+    const span = cv.width + c.w + 20, x = Math.floor(((c.x0 + waveTick*c.speed) % span + span) % span) - c.w - 10;
+    for (const [dx, dy, w, h] of c.rects) ctx.rect(x + dx, c.y + dy, w, h);
+  }
+  ctx.fill();
+}
+function drawAnts(){                                   // marching ants along the selected route's centre line
+  if (!state.sel || state.sel.type !== 'route' || !state.routes[state.sel.idx]) return;
+  const sq = routePaths()[state.sel.idx].squares; let i = 0;
+  for (let k = 1; k < sq.length; k++){
+    const ax = sq[k-1].x*TILE + 4, ay = sq[k-1].y*TILE + 4, bx = sq[k].x*TILE + 4, by = sq[k].y*TILE + 4;
+    const sx = Math.sign(bx - ax), sy = Math.sign(by - ay);
+    for (let s = 0; s < TILE; s++, i++) if ((((i - waveTick) % 4) + 4) % 4 < 2) px(ax + sx*s, ay + sy*s, 1, 1, '#ffffff');
+  }
 }
 
 function drawMarker(t){
@@ -691,6 +1312,10 @@ function drawMarker(t){
   px(b.x0, b.y0, b.w, b.h, c[0]); px(b.x0+1, b.y0+1, b.w-2, b.h-2, c[1]);
   px(b.x0+1, b.y0+1, b.w-2, 1, c[2]); px(b.x0+1, b.y0+1, 1, b.h-2, c[2]);
   if (t.id === state.startId) px(X+3, Y+3, 2, 2, '#fff070');
+  if (t.locked){                                      // tiny gold padlock on the top-right corner
+    const lx = b.x0 + b.w - 3, ly = b.y0 - 2;
+    px(lx-1, ly-1, 5, 5, '#3a2a00'); px(lx, ly+1, 3, 2, '#ffd040'); px(lx, ly, 1, 1, '#ffd040'); px(lx+2, ly, 1, 1, '#ffd040');
+  }
   return b;
 }
 
@@ -703,73 +1328,85 @@ function bracket(b){
 }
 
 function render(){
-  if (!state.terrain){ drawPlaceholder(); return; }
-  drawTerrain();
-  if ($('showGrid').checked){
-    ctx.fillStyle = 'rgba(0,0,0,.15)';
-    for (let x = 1; x < MW; x++) ctx.fillRect(x*TILE, 0, 1, cv.height);
-    for (let y = 1; y < MH; y++) ctx.fillRect(0, y*TILE, cv.width, 1);
-  }
-  if ($('showRoads').checked){
-    ctx.fillStyle = 'rgba(70,40,20,.7)';
-    for (const k of state.roadEdges){
-      const a = Math.floor(k/1000), b = k % 1000;
-      const ax = (a % MW)*TILE + 4, ay = ((a/MW) | 0)*TILE + 4, bx = (b % MW)*TILE + 4, by = ((b/MW) | 0)*TILE + 4;
-      ctx.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx-ax) + 1, Math.abs(by-ay) + 1);
-    }
-  }
-  // routes: outline pass, then fill pass, so crossings merge cleanly
-  const blocks = [], segs = [];
-  routePaths().forEach((p, ri) => {
-    const sel = state.sel && state.sel.type === 'route' && state.sel.idx === ri;
-    p.squares.forEach((s, k) => {
-      const water = sqKind(s.x, s.y) === 'water';
-      blocks.push({ x:s.x*TILE+4, y:s.y*TILE+4, water, sel });
-      if (k){ const pr = p.squares[k-1];
-        segs.push({ ax:pr.x*TILE+4, ay:pr.y*TILE+4, bx:s.x*TILE+4, by:s.y*TILE+4, water:water && sqKind(pr.x, pr.y) === 'water', sel }); }
-    });
-  });
-  const segRect = (s, pad) => [Math.min(s.ax, s.bx)-pad, Math.min(s.ay, s.by)-pad, Math.abs(s.bx-s.ax)+pad*2, Math.abs(s.by-s.ay)+pad*2];
-  // Routes are painted solid on their own layer, then laid over the terrain at ROUTE_ALPHA in one go.
-  // (Blending each piece separately would make overlaps and corners darker.)
-  rctx.clearRect(0, 0, routeLayer.width, routeLayer.height);
-  const rpx = (x, y, w, h, c) => { rctx.fillStyle = c; rctx.fillRect(x, y, w, h); };
-  for (const s of segs){ const [x, y, w, h] = segRect(s, 3); rpx(x, y, w, h, s.water ? PAL.sOut : PAL.rOut); }
-  for (const b of blocks) rpx(b.x-3, b.y-3, 6, 6, b.water ? PAL.sOut : PAL.rOut);
-  for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, s.water ? PAL.sFill : PAL.rFill); }
-  for (const b of blocks.filter(b => !b.sel)) rpx(b.x-2, b.y-2, 4, 4, b.water ? PAL.sFill : PAL.rFill);
-  for (const s of segs.filter(s => s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, PAL.rSel); }
-  for (const b of blocks.filter(b => b.sel)) rpx(b.x-2, b.y-2, 4, 4, PAL.rSel);
-  ctx.globalAlpha = ROUTE_ALPHA; ctx.drawImage(routeLayer, 0, 0); ctx.globalAlpha = 1;
+  if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
+  const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.river), idOf(state.roadEdges),
+              $('showGrid').checked, $('showRivers').checked].join('|');
+  if (sk !== staticKey){ buildStatic(); staticKey = sk; }
+  const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
+  const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
+              state.sel && state.sel.type === 'route' ? state.sel.idx : -1].join('|');
+  if (rk !== routeKey){ buildRouteLayer(); routeKey = rk; }
+  const rv = revealNow();                              // null when no reveal is playing
+  if (rv && rv.terrainX != null){                     // terrain sweeping in from the left, with a bright scan line
+    px(0, 0, cv.width, cv.height, PAL.deep);
+    if (rv.terrainX > 0) ctx.drawImage(staticLayer, 0, 0, rv.terrainX, cv.height, 0, 0, rv.terrainX, cv.height);
+    px(rv.terrainX, 0, 2, cv.height, 'rgba(255,255,255,.7)');
+  } else { ctx.drawImage(staticLayer, 0, 0); drawWater(); }
+  ctx.globalAlpha = ROUTE_ALPHA;
+  if (rv && rv.routeD != null){                       // routes growing outward from the starting town
+    ctx.save(); ctx.beginPath();
+    for (const [k, d] of rv.dist) if (d <= rv.routeD) ctx.rect((k % MW)*TILE, ((k/MW) | 0)*TILE, TILE, TILE);
+    ctx.clip(); ctx.drawImage(routeLayer, 0, 0); ctx.restore();
+  } else if (!rv) ctx.drawImage(routeLayer, 0, 0);
+  ctx.globalAlpha = 1;
+  if (!rv) drawAnts();
+  drawClouds();
   // markers
   const boxes = {};
-  for (const kind of ['landmark', 'town', 'city']) state.towns.filter(t => t.kind === kind).forEach(t => boxes[t.id] = drawMarker(t));
+  for (const kind of ['landmark', 'town', 'city']) state.towns.filter(t => t.kind === kind).forEach(t => {
+    if (rv){                                          // during a reveal, towns pop in as the routes reach them
+      if (rv.routeD == null) return;
+      const d = rv.townD.get(t.id) ?? rv.maxD + 1;
+      if (d > rv.routeD) return;
+      if (rv.routeD - d < 0.8){ const b = drawMarker(t); px(b.x0, b.y0, b.w, b.h, 'rgba(255,255,255,.75)'); return; }   // pop flash
+    }
+    boxes[t.id] = drawMarker(t);
+  });
+  if (rv){ drawNorth(); applyTheme(); updateOverlay(); return; }
   const selId = state.linkFrom || (state.sel && state.sel.type === 'town' && state.sel.id);
   if (selId && boxes[selId]) bracket(boxes[selId]);
   if (state.sel && state.sel.type === 'cell') bracket({ x0:state.sel.x*TILE, y0:state.sel.y*TILE, w:8, h:8 });
+  drawNorth();
   drawCursor();
+  applyTheme();
+  updateOverlay();
+}
+// Small north arrow in the corner whenever the frame was rotated
+function drawNorth(){
+  const g = state.gen; if (!g || !g.b.rot) return;
+  const th = g.b.rot*Math.PI/180, dx = -Math.sin(th), dy = -Math.cos(th), cx = 213, cy = 11;
+  px(cx-8, cy-8, 17, 17, 'rgba(0,0,0,.45)');
+  ctx.save(); ctx.lineCap = 'round';
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx - dx*5, cy - dy*5); ctx.lineTo(cx + dx*5, cy + dy*5); ctx.stroke();
+  ctx.fillStyle = '#f83030'; ctx.beginPath();
+  ctx.moveTo(cx + dx*7, cy + dy*7); ctx.lineTo(cx + dx*2 - dy*3, cy + dy*2 + dx*3); ctx.lineTo(cx + dx*2 + dy*3, cy + dy*2 - dx*3);
+  ctx.fill(); ctx.restore();
 }
 
 // ===== Info box =====
 function actionBtn(label, fn){
   const b = document.createElement('button'); b.textContent = label;
-  b.onclick = () => { fn(); renumber(); render(); showInfo(); };
+  b.onclick = async () => { pushUndo(); await fn(); renumber(); render(); showInfo(); };
   $('infoActions').appendChild(b);
 }
 const elevText = (x, y) => state.elev ? ` · ${Math.round(state.sqElev[y*MW+x])} m` : '';
 function showInfo(){
+  scheduleSave(); updateUndoButtons(); updateTitle(); renderList();
   const box = $('infoBox'); $('infoActions').innerHTML = '';
   updatePopup();
   $('toolHint').textContent = TOOL_HINTS[state.tool];
-  if (!state.terrain){ box.innerHTML = 'Welcome!<small>Press New Region to generate a map.</small>'; return; }
+  if (state.forging){ box.innerHTML = `Forging…<small>${esc(prog.label)}</small>`; return; }
+  if (!state.terrain){ box.innerHTML = 'Welcome!<small>Pan and zoom so the dashed 28×15 frame covers your region, then press Forge.</small>'; return; }
   const sel = state.sel;
   if (state.tool === 'link' && state.linkFrom){ box.innerHTML = `${esc(townById(state.linkFrom).name)} →<small>Now tap the town to connect to.</small>`; return; }
   if (sel && sel.type === 'town' && townById(sel.id)){
-    const t = townById(sel.id);
+    const t = townById(sel.id), ll = toLatLng(t.x, t.y);
     const n = state.routes.filter(r => r.a === t.id || r.b === t.id).length;
     const kind = t.kind === 'city' && t.size === 2 ? 'Big city (2 squares)' : { city:'City', town:'Town', landmark:'Landmark' }[t.kind];
-    box.innerHTML = `${esc(t.name)}<small>${kind}${t.id === state.startId ? ' · Starting town' : ''} · ${n} route${n === 1 ? '' : 's'}<br>Square (${t.x}, ${t.y})${elevText(t.x, t.y)}</small>`;
-    actionBtn('RENAME', () => askText('New name:', t.name).then(v => { if (v) t.name = v.trim(); renumber(); render(); showInfo(); }));
+    box.innerHTML = `${esc(t.name)}<small>${kind}${t.id === state.startId ? ' · Starting town' : ''}${t.locked ? ' · 🔒 Locked' : ''} · ${n} route${n === 1 ? '' : 's'}<br>Square (${t.x}, ${t.y})${elevText(t.x, t.y)} · ${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}</small>`;
+    actionBtn(t.locked ? 'UNLOCK' : 'LOCK', () => { t.locked = !t.locked; });
+    actionBtn('RENAME', async () => { const v = await askText('New name:', t.name); if (v) t.name = v.trim(); });
     actionBtn('SIZE', () => {      // city → big city → town → landmark → city
       if (t.kind === 'city' && t.size !== 2){ if (!makeBig(t, state.towns, false)){ t.kind = 'town'; setStatus('No room to grow — made it a town.'); } }
       else if (t.kind === 'city'){ t.size = 1; t.kind = 'town'; }
@@ -781,25 +1418,31 @@ function showInfo(){
       if (!makeBig(t, state.towns, false, t.dir === 'v' ? 'h' : 'v')){ Object.assign(t, keep); setStatus('No room to rotate here.'); }
     });
     if (t.kind !== 'landmark' && t.id !== state.startId) actionBtn('MAKE START', () => { state.startId = t.id; });
+    showWiki(t, box);
     return;
   }
   if (sel && sel.type === 'route' && state.routes[sel.idx]){
     const r = state.routes[sel.idx], p = findPath(townById(r.a), townById(r.b));
-    box.innerHTML = `Route ${r.num ?? '???'}<small>${esc(townById(r.a).name)} ↔ ${esc(townById(r.b).name)} · ${p.squares.length} squares${p.waterFrac > 0.5 ? ' · Sea route (Surf)' : ''}</small>`;
+    const pr = routeProfile(p.squares);
+    box.innerHTML = `${esc(r.name || 'Route')}<small>${esc(townById(r.a).name)} ↔ ${esc(townById(r.b).name)} · ${fmtKm(pr.km)} (${p.squares.length} squares)<br>Follows real roads: ${Math.round(p.roadFrac*100)}%${p.waterFrac > 0.5 ? ' · Sea route (Surf)' : ''}${r.custom ? ' · your name' : ''}</small>${profileSvg(pr)}`;
+    actionBtn('RENAME', async () => { const v = await askText('Name this route:', r.name); if (v && v.trim()){ r.name = v.trim(); r.custom = true; } });
+    if (r.custom) actionBtn('AUTO NAME', () => { r.custom = false; });
     return;
   }
   if (sel && sel.type === 'cell'){
-    const k = sqKind(sel.x, sel.y);
+    const k = sqKind(sel.x, sel.y), ll = toLatLng(sel.x, sel.y);
     const midSub = (sel.y*SUB + 2)*SW + sel.x*SUB + 2;
     const label = k === 'water' ? (state.lake[midSub] ? 'Lake' : 'Open Sea') : { land:'Wilderness', hill:'Hills', mountain:'Mountains' }[k];
     const road = state.roadSq[sel.y*MW + sel.x] > 0 ? ' · Real road here' : '';
     const rv = state.riverNames.get(sel.y*MW + sel.x);
-    box.innerHTML = `${label}<small>Square (${sel.x}, ${sel.y})${elevText(sel.x, sel.y)}${road}${rv ? ' · ' + esc(rv) : ''}</small>`;
+    box.innerHTML = `${label}<small>Square (${sel.x}, ${sel.y})${elevText(sel.x, sel.y)}${road}${rv ? ' · ' + esc(rv) : ''}<br>${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}</small>`;
     return;
   }
   const nT = state.towns.filter(t => t.kind !== 'landmark').length;
   const avgRoad = state.routes.length ? Math.round(routePaths().reduce((s, p) => s + p.roadFrac, 0)/state.routes.length*100) : 0;
-  box.innerHTML = `Region forged!<small>${nT} towns · ${state.routes.length} routes · tap a square or use the D-pad${state.notes.length ? '<br>⚠ ' + state.notes.join(' ') : ''}</small>`;
+  const load = Object.entries(state.timings || {}).map(([k, v]) => `${k} ${v.s.toFixed(1)} s (${v.mb.toFixed(1)} MB)`).join(' · ');
+  const nLocked = state.towns.filter(t => t.locked).length;
+  box.innerHTML = `Region forged!<small>${nT} towns · ${state.routes.length} routes · Layout #${state.variant || 0}${state.variant ? '' : ' (best picks)'}${nLocked ? ` · ${nLocked} locked` : ''} · ${avgRoad}% of route steps follow real roads${load ? '<br>Load: ' + load : ''}${state.notes.length ? '<br>⚠ ' + state.notes.join(' ') : ''}</small>`;
 }
 
 // ===== Canvas interaction =====
@@ -810,10 +1453,18 @@ function cellFromEvent(e){
   const clamp = (v, n) => Math.max(0, Math.min(n-1, Math.floor(v*n)));
   return { x:clamp(fx, MW), y:clamp(fy, MH), sx:clamp(fx, SW), sy:clamp(fy, SH) };
 }
-function townAt(c){
+// reach 0 = only a town on that exact square; reach 1 = also the squares around it (forgiving taps)
+function townAt(c, reach = 1){
   let best = null;
-  for (const t of state.towns){ const d = Math.min(...footprint(t).map(f => cheb(f, c))); if (d <= 1 && (!best || d < best.d)) best = { t, d }; }
+  for (const t of state.towns){ const d = Math.min(...footprint(t).map(f => cheb(f, c))); if (d <= reach && (!best || d < best.d)) best = { t, d }; }
   return best && best.t;
+}
+// What a tap means: a town on that exact square, else a route on that square, else a town next to it.
+// (So a route running beside a town can still be selected.)
+function hitTest(c){
+  let t = townAt(c, 0), ri = -1;
+  if (!t){ ri = routeAt(c); if (ri < 0) t = townAt(c, 1); }
+  return { t, ri };
 }
 function routeAt(c){
   const paths = routePaths();
@@ -827,39 +1478,41 @@ function paint(c){
   derive(); render();
 }
 
-cv.addEventListener('pointerdown', e => {
-  if (!state.terrain) return;
+cv.addEventListener('pointerdown', async e => {
+  if (!state.terrain || state.forging) return;
+  if (skipReveal()) return;                          // a tap during the reveal just finishes it
   cv.setPointerCapture(e.pointerId);
-  const c = cellFromEvent(e), t = townAt(c), ri = t ? -1 : routeAt(c);
+  const c = cellFromEvent(e), { t, ri } = hitTest(c);
   state.cursor = { x:c.x, y:c.y }; cursorOn = true;
   switch (state.tool){
     case 'inspect':
-      if (t){ state.sel = { type:'town', id:t.id }; dragging = t; moved = false; }
+      if (t){ state.sel = { type:'town', id:t.id }; dragging = t; moved = false; pushUndo(); }   // dropped again if it doesn't move
       else if (ri >= 0) state.sel = { type:'route', idx:ri };
       else state.sel = { type:'cell', x:c.x, y:c.y };
       break;
     case 'add': {
       const here = occupiedIn(state.towns, c.x, c.y);
       if (here){ state.sel = { type:'town', id:here.id }; break; }
-      askText('Name your new town:', 'New Town').then(name => {
-        if (name === null) return;
-        const nt = { id:newId(), name:name.trim() || 'New Town', x:c.x, y:c.y, kind:'town', size:1, score:0 };
-        const near = state.towns.filter(o => o.kind !== 'landmark').sort((a, b) => dist(a, nt) - dist(b, nt))[0];
-        state.towns.push(nt);
-        if (near) state.routes.push({ a:near.id, b:nt.id });
-        state.sel = { type:'town', id:nt.id };
-        renumber(); render(); showInfo();
-      });
-      return;
+      const name = await askText('Name your new town:', 'New Town');
+      if (name === null) return;
+      pushUndo();
+      const nt = { id:newId(), name:name.trim() || 'New Town', x:c.x, y:c.y, kind:'town', size:1, score:0 };
+      const near = state.towns.filter(o => o.kind !== 'landmark').sort((a, b) => dist(a, nt) - dist(b, nt))[0];
+      state.towns.push(nt);
+      if (near) state.routes.push({ a:near.id, b:nt.id });
+      state.sel = { type:'town', id:nt.id };
+      break;
     }
     case 'delete':
-      if (t){ state.towns = state.towns.filter(o => o !== t); state.sel = null; }
-      else if (ri >= 0){ state.routes.splice(ri, 1); state.sel = null; }
+      if (t && t.locked){ setStatus(`${t.name} is locked: unlock it before deleting.`); break; }
+      if (t){ pushUndo(); state.towns = state.towns.filter(o => o !== t); state.sel = null; }
+      else if (ri >= 0){ pushUndo(); state.routes.splice(ri, 1); state.sel = null; }
       break;
     case 'link':
       if (!t){ state.linkFrom = null; break; }
       if (!state.linkFrom){ state.linkFrom = t.id; break; }
       if (state.linkFrom !== t.id){
+        pushUndo();
         const a = state.linkFrom, b = t.id;
         const i = state.routes.findIndex(r => (r.a === a && r.b === b) || (r.a === b && r.b === a));
         if (i >= 0) state.routes.splice(i, 1); else state.routes.push({ a, b });
@@ -867,7 +1520,7 @@ cv.addEventListener('pointerdown', e => {
       state.linkFrom = null; state.sel = { type:'town', id:t.id };
       break;
     default:
-      painting = true; paint(c); return;
+      pushUndo(); painting = true; paint(c); return;
   }
   renumber(); render(); showInfo();
 });
@@ -880,7 +1533,11 @@ cv.addEventListener('pointermove', e => {
     dragging.x = c.x; dragging.y = c.y; moved = true; state.cursor = { x:c.x, y:c.y }; render();
   } else if (painting) paint(c);
 });
-const endPointer = () => { if ((dragging && moved) || painting) showInfo(); dragging = null; painting = false; };
+const endPointer = () => {
+  if (dragging && !moved) dropLastUndo();          // a tap on a town isn't an edit
+  if ((dragging && moved) || painting) showInfo();
+  dragging = null; painting = false;
+};
 cv.addEventListener('pointerup', endPointer);
 cv.addEventListener('pointercancel', endPointer);
 
@@ -889,124 +1546,649 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
   state.tool = b.dataset.tool; state.linkFrom = null; render(); showInfo();
 });
 $('showGrid').onchange = render;
-$('showRoads').onchange = render;
 $('showRivers').onchange = render;
+$('flavorNames').onchange = () => {
+  if (!state.terrain) return;
+  pushUndo({ flavor:!$('flavorNames').checked });  // record how it was before the click
+  nameRoutes(); render(); showInfo();
+};
 
-// ===== In-page text dialog (prompt() is blocked in hosted pages) =====
-function askText(label, def){
-  return new Promise(resolve => {
-    $('dlgLabel').textContent = label; $('dlgInput').value = def || ''; $('dlg').style.display = 'flex';
-    const done = v => { $('dlg').style.display = 'none'; $('dlgOk').onclick = $('dlgCancel').onclick = null; resolve(v); };
-    $('dlgOk').onclick = () => done($('dlgInput').value);
-    $('dlgCancel').onclick = () => done(null);
-    $('dlgInput').onkeydown = e => { if (e.key === 'Enter') done($('dlgInput').value); };
-    setTimeout(() => $('dlgInput').focus(), 50);
+// ===== Forge! =====
+// ===== Loading bar =====
+// Stages: map + elevation tiles 0–35% (counted per tile), towns/roads/rivers 35–92%
+// (Overpass gives no total size, so this stage eases toward 92% and shows MB received + seconds),
+// placing towns and routing 92–100%.
+// Each stage has its own pool of quips; a new one rotates in every 2.5 s.
+// The real numbers (tiles, MB, seconds) ride along after the quip so you can still tell it's working.
+const QUIPS = {
+  terrain:['Charting the coastline…', 'Using HM03 Surf…', 'Climbing Mt. Coronet…', 'Scaling cliffs with Rock Climb…',
+           'Unfolding the Town Map…', 'Mapping lakes for the Lake Guardians…', 'Measuring mountains for Hikers…'],
+  scout:  ['Trailblazing a new route…', 'Picking your starter…', 'Exploring Victory Road…', 'Using HM01 Cut…',
+           'Using HM04 Strength…', 'Lighting the way with HM05 Flash…', 'Asking Professor Rowan for directions…',
+           'Polishing Gym badges…', 'Restocking the Poké Mart…', 'Healing at the Pokémon Center…',
+           'Dodging Zubat in the caves…', 'Waking the Snorlax blocking the road…', 'Riding Cycling Road…',
+           'Shaking Berry trees…', 'Registering Fly destinations…', 'Reading every route sign…',
+           'Avoiding Youngster Joey\'s phone calls…', 'Getting lost in the tall grass…'],
+  route:  ['Naming routes after local landmarks…', 'Hammering in town signs…', 'Your rival is waiting at the next town…'],
+  done:   ['Region forged!']
+};
+const prog = { pct:0, label:'', stage:'terrain', detail:'', quip:0 };
+const quipNow = () => { const q = QUIPS[prog.stage]; return q[prog.quip % q.length]; };
+function setProgress(pct, stage, detail){
+  prog.pct = Math.max(prog.pct, Math.min(100, pct));
+  if (stage && stage !== prog.stage){ prog.stage = stage; prog.quip = Math.floor(Math.random()*QUIPS[stage].length); }
+  if (detail !== undefined) prog.detail = detail;
+  prog.label = quipNow() + (prog.detail ? ` (${prog.detail})` : '');
+  $('progress').style.display = 'block';
+  $('progressFill').style.width = prog.pct + '%';
+  setStatus(`${prog.label} ${Math.round(prog.pct)}%`);
+  if (!state.terrain) render();
+  showInfo();
+}
+function endProgress(){ $('progress').style.display = 'none'; $('progressFill').style.width = '0%'; prog.pct = 0; }
+
+// Wipe the previous region so old towns never mix with the new one
+function clearRegion(){
+  Object.assign(state, { terrain:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
+    startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
+    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{}, source:null, variant:0,
+    regionName:'', regionNameCustom:false });
+  pathCache.clear(); $('popup').style.display = 'none';
+}
+
+async function forge(opts = {}){
+  const btn = $('forgeBtn'); btn.disabled = true;
+  let ticker = null, quipTimer = null;
+  try {
+    const b = frameBounds();
+    if (state.terrain) pushUndo();                  // forging a new region can be undone too
+    clearRegion();
+    state.forging = true; prog.pct = 0; prog.stage = ''; prog.detail = '';
+    quipTimer = setInterval(() => { prog.quip++; setProgress(prog.pct); }, 2500);
+    state.seed = opts.seed ?? Math.floor(Math.random()*1e6); state.nextId = 1;
+    setProgress(2, 'terrain', '');
+
+    const tiles = { done:0, total:0, onTick(){ setProgress(2 + 43*this.done/Math.max(1, this.total), null, `${this.done}/${this.total} tiles`); } };
+    let bytes = 0; const onBytes = n => { bytes += n; };
+    const [osm, dem, stat] = await Promise.all([
+      fetchMosaic(b, (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, 600, 1600, 16, tiles),
+      fetchMosaic(b, (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`, 300, 900, 13, tiles),
+      timed('map data', ob => loadStatic(b, ob, tiles), onBytes).catch(() => null)
+    ]);
+    if (!dem.data) state.notes.push('Elevation unavailable — no mountains.');
+    state.gen = makeGen(b, osm.z);
+    const app = stat ? staticToApp(stat, b) : null;
+    if (!osm.data) state.notes.push(app ? 'Map tiles unreadable — lakes from bundled data.' : 'Couldn\'t read water from map tiles.');
+    buildTerrain(osm, dem, app ? app.lakes : []);
+    render(); startReveal('terrain');              // show the new terrain (sweeping in) while towns load
+
+    // Roads and rivers come straight from the bundled data: no waiting on Overpass.
+    let places = [], landmarks = [];
+    if (app){
+      ingestRoads(app.roads); ingestRivers(app.rivers);
+      places = app.places; landmarks = app.landmarks;
+    } else state.notes.push('Bundled data unavailable (open the site over http, not as a file) — using Overpass only.');
+
+    // Optional extras from OpenStreetMap: villages, neighborhoods and more landmarks.
+    // Only asked for when the bundled towns are thin or the frame is zoomed in, with a hard time limit.
+    const count = +$('townCount').value, km = frameKm(b), tier = roadTier(b);
+    const wantExtras = !app || places.length < count*2 || km.w < 60;
+    if (wantExtras){
+      // 8 s when the bundled data already has enough towns (extras are a bonus), 15 s when they're needed
+      const t0 = Date.now(), deadline = t0 + (!app ? 30000 : places.length >= count ? 8000 : 15000);
+      const stageLabel = () => `${Math.round(km.w)}×${Math.round(km.h)} km, ${tier.label} · ${(bytes/1048576).toFixed(1)} MB · ${Math.round((Date.now()-t0)/1000)} s`;
+      setProgress(45, 'scout', stageLabel());
+      ticker = setInterval(() => setProgress(45 + 47*Math.min(1, (Date.now()-t0)/(deadline-t0)), null, stageLabel()), 250);
+      const tasks = [timed('OSM towns', ob => fetchPlaces(b, osm.z, ob, deadline), onBytes),
+                     timed('OSM landmarks', ob => fetchLandmarks(b, ob, deadline), onBytes)];
+      if (!app) tasks.push(timed('OSM roads & rivers', ob => fetchWays(b, osm.z, true, ob), onBytes));
+      const [pR, lR, wR] = await Promise.allSettled(tasks);
+      clearInterval(ticker); ticker = null;
+      if (pR.status === 'fulfilled') places = places.concat(pR.value);
+      if (lR.status === 'fulfilled') landmarks = landmarks.concat(lR.value);
+      if (wR && wR.status === 'fulfilled'){ ingestRoads(wR.value.roads); ingestRivers(wR.value.rivers); }
+      if (pR.status !== 'fulfilled' && lR.status !== 'fulfilled')
+        state.notes.push(app ? 'OpenStreetMap was busy — used bundled towns only.' : 'Town and road lookups failed.');
+    }
+
+    setProgress(92, 'route', '');
+    await new Promise(r => setTimeout(r, 30));     // let the bar paint before the heavy work
+    computeNameMaps(app && app.named, landmarks);
+    state.source = { places, landmarks }; state.variant = opts.variant || 0;     // kept so REROLL needs no new downloads
+    state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks, { variant:state.variant });
+    state.routes = buildRoutes(+$('extraCount').value);
+    snapLandmarks();
+    renumber();
+    if (opts.regionName){ state.regionName = opts.regionName; state.regionNameCustom = true; } else suggestRegionName();
+    const st = townById(state.startId); state.cursor = st ? { x:st.x, y:st.y } : { x:0, y:0 };
+    clearInterval(quipTimer); quipTimer = null;
+    setProgress(100, 'done', '');
+    state.forging = false;
+    startReveal('routes');
+    render(); showInfo();
+    setTimeout(endProgress, 500);
+    setStatus(`Forged ${state.towns.filter(t => t.kind !== 'landmark').length} towns and ${state.routes.length} routes.`);
+    $('townMapCard').scrollIntoView({ behavior:'smooth' });
+  } catch (e) {
+    state.forging = false; endProgress(); render(); showInfo();
+    setStatus('Something went wrong: ' + e.message);
+  } finally { if (ticker) clearInterval(ticker); if (quipTimer) clearInterval(quipTimer); btn.disabled = false; }
+}
+$('forgeBtn').onclick = forge;
+let bendyBefore = 50, bendyArmed = false;          // one undo step per slider drag, not per pixel
+$('bendy').addEventListener('pointerdown', () => { bendyBefore = +$('bendy').value; });
+$('bendy').addEventListener('change', () => { bendyArmed = false; });
+$('bendy').oninput = () => {
+  const v = +$('bendy').value;
+  if (state.terrain && !bendyArmed){ pushUndo({ bendy:bendyBefore }); bendyArmed = true; }
+  setBendyLabel();
+  if (state.terrain && !state.forging){ pathCache.clear(); renumber(); render(); showInfo(); }
+};
+// Routes you renamed keep their name if the same two towns are still connected afterwards
+const pairKey = (a, b) => a < b ? a + '-' + b : b + '-' + a;
+function rebuildRoutesKeepingNames(){
+  const custom = new Map(state.routes.filter(r => r.custom).map(r => [pairKey(r.a, r.b), r.name]));
+  state.routes = buildRoutes(+$('extraCount').value);
+  for (const r of state.routes){ const nm = custom.get(pairKey(r.a, r.b)); if (nm){ r.name = nm; r.custom = true; } }
+}
+$('rerouteBtn').onclick = () => {
+  if (!state.terrain) return;
+  pushUndo();
+  rebuildRoutesKeepingNames(); snapLandmarks();
+  state.sel = null; renumber(); render(); showInfo();
+};
+// Same area, different towns and landmarks. Locked towns stay; uses the current Towns / Extra routes / landmark settings.
+$('rerollBtn').onclick = () => {
+  if (!state.terrain || state.forging) return;
+  if (!state.source){ setStatus('Reroll needs the downloaded place data: forge this area again first.'); return; }
+  pushUndo();
+  const locked = state.towns.filter(t => t.locked);
+  state.variant = 1 + Math.floor(Math.random()*99998);
+  state.notes = state.notes.filter(n => !n.startsWith('Only '));
+  state.towns = pickTowns(state.source.places, +$('townCount').value, $('landmarks').checked, state.source.landmarks,
+                          { variant:state.variant, locked });
+  rebuildRoutesKeepingNames(); snapLandmarks();
+  if (!locked.some(t => t.id === state.startId)) state.startId = null;
+  state.sel = null; renumber();
+  const st = townById(state.startId); if (st) state.cursor = { x:st.x, y:st.y };
+  startReveal('routes'); render(); showInfo();
+  setStatus(`Layout #${state.variant}${locked.length ? ` · kept ${locked.length} locked` : ''}.`);
+};
+
+// ===== Palette themes =====
+// Every finished frame is passed through a colour lookup table, so each theme recolours everything
+// (terrain, routes, markers, clouds, blends) consistently. Results are cached per colour, so it's cheap.
+const clamp8 = v => v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
+const luma = (r, g, b) => 0.299*r + 0.587*g + 0.114*b;
+const T_NIGHT = (r, g, b) => {
+  const glow = (r > 180 && g < 130) || (r > 200 && g > 180 && b < 140) || luma(r, g, b) > 235;   // markers, lights, foam
+  if (glow) return [r*.85, g*.8, b*.9 + 10];
+  if (r > 200 && g > 130 && b < 130) return [r*.72, g*.58, b*.55 + 22];             // routes stay warm, like lamplit roads
+  return [r*.32 + 8, g*.40 + 14, b*.62 + 40];
+};
+const T_GOLDEN = (r, g, b) => [r*1.06 + 10, g*.92 + 4, b*.75];
+const T_TWILIGHT = (r, g, b) => [r*.6 + 30, g*.5 + 10, b*.7 + 45];
+const POKETCH = [[24, 48, 32], [58, 106, 56], [120, 168, 96], [192, 224, 160]];
+// 4 greens only, so brightness alone would merge towns with the sea and routes with land: pick shades by role
+const T_POKETCH = (r, g, b) => {
+  if (r > 180 && g < 120 && b < 120) return POKETCH[0];                               // red town markers: darkest
+  if (r > 200 && g > 140 && b < 130) return POKETCH[3];                               // routes (orange/yellow): lightest
+  if (b > r + 20 && b > g - 10) return POKETCH[luma(r, g, b) < 170 ? 1 : 2];          // water + blue landmarks
+  const L = luma(r, g, b); return POKETCH[L < 60 ? 0 : L < 110 ? 1 : L < 205 ? 2 : 3];
+};
+const T_SEPIA = (r, g, b) => {
+  const s = [r*.393 + g*.769 + b*.189, r*.349 + g*.686 + b*.168, r*.272 + g*.534 + b*.131];
+  return [s[0]*.7 + r*.15 + 244*.15, s[1]*.7 + g*.15 + 228*.15, s[2]*.7 + b*.15 + 196*.15];   // keep a hint of colour + old paper
+};
+const mixT = (f, g, u) => (r, gg, b) => { const a = f ? f(r, gg, b) : [r, gg, b], c = g(r, gg, b); return a.map((v, i) => v + (c[i] - v)*u); };
+
+// Sun altitude (degrees) at a place and time: compact version of the standard NOAA/astronomical formulas
+function sunAltitude(lat, lng, date = new Date()){
+  const rad = Math.PI/180, d = date.getTime()/86400000 + 2440587.5 - 2451545.0;   // days since J2000.0
+  const g = (357.529 + 0.98560028*d)*rad, q = 280.459 + 0.98564736*d;
+  const L = (q + 1.915*Math.sin(g) + 0.020*Math.sin(2*g))*rad, e = (23.439 - 0.00000036*d)*rad;
+  const ra = Math.atan2(Math.cos(e)*Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e)*Math.sin(L));
+  const gmst = ((18.697374558 + 24.06570982441908*d) % 24 + 24) % 24, ha = (gmst*15 + lng)*rad - ra;
+  return Math.asin(Math.sin(lat*rad)*Math.sin(dec) + Math.cos(lat*rad)*Math.cos(dec)*Math.cos(ha))/rad;
+}
+function liveTheme(){
+  const c = state.gen?.b.center || map.getCenter(), a = sunAltitude(c.lat, c.lng);
+  let fn, label;
+  if (a >= 12){ fn = null; label = 'day'; }
+  else if (a >= 0){ fn = mixT(null, T_GOLDEN, (12 - a)/12); label = 'golden hour'; }
+  else if (a >= -6){ fn = mixT(T_GOLDEN, T_TWILIGHT, -a/6); label = 'sunset / dusk'; }
+  else if (a >= -12){ fn = mixT(T_TWILIGHT, T_NIGHT, (-6 - a)/6); label = 'twilight'; }
+  else { fn = T_NIGHT; label = 'night'; }
+  return { fn, alt:a, key:'live' + Math.round(a*2), info:`☀ sun ${a >= 0 ? a.toFixed(0) + '° up' : (-a).toFixed(0) + '° below the horizon'}: ${label}` };
+}
+let themeLut = new Map(), themeLutKey = '', themeNow = { fn:null, key:'day', info:'' };
+function refreshTheme(){
+  const v = $('theme').value;
+  themeNow = v === 'live' ? liveTheme() : { fn:{ night:T_NIGHT, poketch:T_POKETCH, sepia:T_SEPIA }[v] || null, key:v, info:'' };
+  $('themeInfo').textContent = themeNow.info;
+  document.body.dataset.theme = v === 'live' ? (themeNow.info.includes('night') ? 'night' : 'day') : v;
+}
+function applyTheme(){
+  const fn = themeNow.fn; if (!fn) return;
+  if (themeLutKey !== themeNow.key){ themeLut = new Map(); themeLutKey = themeNow.key; }
+  const img = ctx.getImageData(0, 0, cv.width, cv.height), d = img.data;
+  for (let i = 0; i < d.length; i += 4){
+    const k = (d[i] << 16) | (d[i+1] << 8) | d[i+2];
+    let v = themeLut.get(k);
+    if (v === undefined){ const [r, g, b] = fn(d[i], d[i+1], d[i+2]); v = (clamp8(r) << 16) | (clamp8(g) << 8) | clamp8(b); themeLut.set(k, v); }
+    d[i] = v >> 16; d[i+1] = (v >> 8) & 255; d[i+2] = v & 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+$('theme').onchange = () => { refreshTheme(); render(); scheduleSave(); };
+setInterval(() => { if ($('theme').value === 'live'){ refreshTheme(); render(); } }, 60000);   // the sun moves
+
+// ===== Map reveal =====
+// After forging: the terrain sweeps in as soon as it's ready; once towns and routes are done, routes grow
+// outward from the starting town (by travel distance along the routes) and towns pop in as they're reached.
+// Tap the map to skip. Skipped entirely for reduced motion.
+let reveal = null;
+function startReveal(phase){
+  if (reduceMotion || !state.terrain){ reveal = null; return; }
+  const now = performance.now();
+  if (phase === 'terrain'){ reveal = { phase, t0:now, dur:700 }; }
+  else {
+    const t0 = reveal && reveal.phase === 'terrain' ? Math.max(now, reveal.t0 + reveal.dur) : now;   // let the sweep finish
+    const paths = routePaths(), adj = new Map(), key = s => s.y*MW + s.x, link = (a, b) => { (adj.get(a) || adj.set(a, []).get(a)).push(b); };
+    for (const p of paths) for (let k = 1; k < p.squares.length; k++){ const a = key(p.squares[k-1]), b = key(p.squares[k]); link(a, b); link(b, a); }
+    const st = townById(state.startId), dist = new Map();
+    const q = st ? footprint(st).map(key) : paths.length ? [key(paths[0].squares[0])] : [];
+    q.forEach(k => dist.set(k, 0));
+    for (let h = 0; h < q.length; h++) for (const n of adj.get(q[h]) || []) if (!dist.has(n)){ dist.set(n, dist.get(q[h]) + 1); q.push(n); }
+    const maxD = Math.max(0, ...dist.values()), townD = new Map();
+    for (const t of state.towns){ const ds = footprint(t).map(f => dist.get(key(f))).filter(v => v != null); townD.set(t.id, ds.length ? Math.min(...ds) : maxD + 1); }
+    reveal = { phase, t0, dur:Math.min(2600, 900 + maxD*45), dist, townD, maxD };
+  }
+  const step = () => {
+    if (!reveal) return;
+    render();
+    if (performance.now() < reveal.t0 + reveal.dur) requestAnimationFrame(step);
+    else if (reveal.phase === 'routes'){ reveal = null; render(); showInfo(); }
+  };
+  requestAnimationFrame(step);
+}
+function revealNow(){
+  if (!reveal) return null;
+  const u = Math.max(0, Math.min(1, (performance.now() - reveal.t0)/reveal.dur));
+  if (reveal.phase === 'terrain') return u >= 1 ? null : { terrainX:Math.round(u*cv.width), routeD:null };
+  const ease = 1 - Math.pow(1 - u, 2);
+  return { terrainX:null, routeD:ease*(reveal.maxD + 1.5), dist:reveal.dist, townD:reveal.townD, maxD:reveal.maxD };
+}
+function skipReveal(){ if (!reveal) return false; reveal = null; render(); showInfo(); return true; }
+
+// ===== Route distance + elevation profile =====
+const kmPerSquare = () => state.gen?.b.kmPerSquare || (state.gen?.b.wKm ? state.gen.b.wKm/MW : frameKm(state.gen?.b || frameBounds()).w/MW);
+const fmtKm = km => km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km).toLocaleString()} km`;
+function routeProfile(sqs){
+  const km = Math.max(0, sqs.length - 1)*kmPerSquare();
+  if (!state.elev || sqs.length < 2) return { km, e:null };
+  const e = [], at = (sx, sy) => Math.max(0, state.elev[sy*SW + sx]);           // water counts as sea level
+  for (let k = 1; k < sqs.length; k++){
+    const a = sqs[k-1], b = sqs[k], dx = b.x - a.x, dy = b.y - a.y;            // walk the centre line, one sub-cell at a time
+    for (let s = 0; s < SUB; s++) e.push(at(a.x*SUB + 2 + dx*s, a.y*SUB + 2 + dy*s));
+  }
+  const last = sqs[sqs.length-1]; e.push(at(last.x*SUB + 2, last.y*SUB + 2));
+  let climb = 0, descent = 0;
+  for (let i = 1; i < e.length; i++){ const d = e[i] - e[i-1]; if (d > 0) climb += d; else descent -= d; }
+  return { km, e, climb, descent, min:Math.min(...e), max:Math.max(...e) };
+}
+function profileSvg(pr){
+  if (!pr.e) return '<small>Elevation profile unavailable for this region.</small>';
+  const W = 260, H = 50, lo = pr.min, span = Math.max(30, pr.max - lo), n = pr.e.length;
+  const pts = pr.e.map((v, i) => `${(i/(n - 1)*W).toFixed(1)},${(H - 4 - (v - lo)/span*(H - 10)).toFixed(1)}`).join(' ');
+  return `<small>↑ ${Math.round(pr.climb).toLocaleString()} m climb · ↓ ${Math.round(pr.descent).toLocaleString()} m descent · ${Math.round(pr.min).toLocaleString()}–${Math.round(pr.max).toLocaleString()} m</small>
+    <svg class="profile" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Elevation profile">
+      <polygon points="0,${H} ${pts} ${W},${H}" fill="#9ad66a" opacity=".55"/>
+      <polyline points="${pts}" fill="none" stroke="#2d6a2d" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+// ===== Wikipedia blurbs =====
+// Finds the article for a real place: first by searching Wikipedia's geotagged pages near the place's real
+// coordinates for a matching title, then by exact title with a distance check. Shows the first two sentences.
+const wikiCache = new Map();
+const normName = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+async function getJson(url){ const r = await fetch(url); if (!r.ok) throw new Error(r.status); return r.json(); }
+function wikiBlurb(t){
+  if (/^(Town \d+|New Town)$/.test(t.name)) return Promise.resolve(null);
+  const key = `${t.name}@${t.lat ?? t.x},${t.lon ?? t.y}`;
+  if (wikiCache.has(key)) return wikiCache.get(key);
+  const job = (async () => {
+    const ll = t.lat != null ? { lat:t.lat, lng:t.lon } : toLatLng(t.x, t.y), want = normName(t.name);
+    const gs = await getJson(`https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${ll.lat.toFixed(5)}|${ll.lng.toFixed(5)}&gsradius=10000&gslimit=30&format=json&origin=*`);
+    const near = gs.query?.geosearch || [];
+    let title = (near.find(g => normName(g.title) === want || normName(g.title).startsWith(want + ',')) ||
+                 near.find(g => normName(g.title).startsWith(want + ' (')))?.title;
+    if (!title) title = t.name;                        // big features (lakes, ranges) have their pin far away: try the plain title
+    const sm = await getJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`);
+    if (sm.type === 'disambiguation' || !sm.extract) return null;
+    if (sm.coordinates){                               // reject a same-named page somewhere else in the world
+      const R = 6371, rad = Math.PI/180, dLat = (sm.coordinates.lat - ll.lat)*rad, dLon = (sm.coordinates.lon - ll.lng)*rad;
+      const dist = 2*R*Math.asin(Math.sqrt(Math.sin(dLat/2)**2 + Math.cos(ll.lat*rad)*Math.cos(sm.coordinates.lat*rad)*Math.sin(dLon/2)**2));
+      if (dist > 150) return null;
+    } else if (title === t.name && !near.length) return null;
+    const sentences = sm.extract.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [sm.extract];
+    return { text:sentences.slice(0, 2).map(x => x.trim()).join(' '), url:sm.content_urls?.desktop?.page, title:sm.title };
+  })().catch(() => null);
+  wikiCache.set(key, job);
+  return job;
+}
+function showWiki(t, box){
+  if (/^(Town \d+|New Town)$/.test(t.name)) return;
+  const div = document.createElement('div'); div.className = 'wiki'; div.textContent = 'Looking it up on Wikipedia…';
+  box.appendChild(div);
+  wikiBlurb(t).then(w => {
+    if (!div.isConnected) return;                    // the selection moved on
+    if (!w){ div.textContent = 'No Wikipedia article found for this place.'; return; }
+    div.innerHTML = `${esc(w.text)} <a href="${esc(w.url)}" target="_blank" rel="noopener">Wikipedia</a> <span style="opacity:.6">(CC BY-SA)</span>`;
   });
 }
 
-// ===== Demo region generator =====
-const DEMO_NAMES = ['Mossbrook Town','Cinderport City','Lanternfall City','Quillhaven Town','Saltmere Town','Brambleton','Coralgate City',
-  'Pinecrest Town','Driftmoor Town','Emberlyn City','Willowmere','Stonereach Town','Fernwick Town','Gullcliff City','Ashvale Town','Tidewater Town',
-  'Cobble Hollow','Starfield Ruins','Old Lighthouse','Hollow Cave','Sunken Pier','Wind Tower','Glass Bridge','Ancient Grove'];
-const RIVER_NAMES = ['Silverrun River','Kettle River','Amberflow River','Reedwater River','Lark River'];
-function vnoise(x, y){
-  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
-  const sm = t => t*t*(3 - 2*t), u = sm(xf), v = sm(yf);
-  const a = hash(xi, yi), b = hash(xi+1, yi), c = hash(xi, yi+1), d = hash(xi+1, yi+1);
-  return a + (b-a)*u + (c-a)*v + (a-b-c+d)*u*v;
+// ===== Region title bar =====
+// Suggests a one-word-ish name from the region's most prominent named feature: a mountain range,
+// then a sea or bay, then a landform, then the biggest city. "Wasatch Range" → "WASATCH".
+const GENERIC = /\b(range|mountains?|mts?\.?|bay|sea|gulf|sound|strait|channel|lake|reservoir|plateau|basin|desert|plain|plains|coastal|coast|valley|hills|great|the|of)\b/gi;
+function shortName(n){ const s = n.replace(GENERIC, ' ').replace(/\s+/g, ' ').trim(); return s || n; }
+function suggestRegionName(){
+  if (state.regionNameCustom) return;
+  const N = state.names, tally = map => { const c = {}; for (const v of map.values()){ const k = typeof v === 'string' ? v : v.name; c[k] = (c[k]||0) + 1; }
+    return Object.entries(c).sort((a, b) => b[1] - a[1])[0]; };
+  let pick = null;
+  if (N){
+    const r = tally(N.range), w = tally(N.sea), l = tally(N.land);
+    if (r && r[1] >= 8) pick = r[0]; else if (w && w[1] >= 8) pick = w[0]; else if (l && l[1] >= 30) pick = l[0];
+  }
+  if (!pick){ const big = state.towns.filter(t => t.kind !== 'landmark').sort((a, b) => (b.score||0) - (a.score||0))[0]; pick = big ? big.name : 'New'; }
+  state.regionName = shortName(pick.replace(/,.*$/, ''));
 }
-const fbm = (x, y) => { let s = 0, amp = 1, f = 1, n = 0; for (let o = 0; o < 5; o++){ s += vnoise(x*f, y*f)*amp; n += amp; amp *= 0.5; f *= 2; } return s/n; };
-function shuffle(a){ for (let i = a.length-1; i > 0; i--){ const j = Math.floor(Math.random()*(i+1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function updateTitle(){
+  $('regionTitle').textContent = state.terrain ? (state.regionName || 'REGION').toUpperCase() : 'REGION MAP';
+}
+$('titleBar').onclick = async () => {
+  if (!state.terrain) return;
+  const v = await askText('Name this region (leave empty for an automatic name):', state.regionName);
+  if (v === null) return;
+  pushUndo();
+  if (v.trim()){ state.regionName = v.trim(); state.regionNameCustom = true; } else { state.regionNameCustom = false; suggestRegionName(); }
+  showInfo();
+};
 
-function demoTerrain(){
-  const e = new Float32Array(SW*SH);
-  const cx = 0.45 + Math.random()*0.1, cy = 0.45 + Math.random()*0.1;
-  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
-    const dx = (x/SW - cx)*1.6, dy = (y/SH - cy)*1.9;
-    e[y*SW+x] = fbm(x/22, y/22) - Math.sqrt(dx*dx + dy*dy)*0.55;
+// ===== Towns & routes list =====
+function renderList(){
+  const body = $('listBody');
+  if (!state.terrain){ body.innerHTML = ''; $('listSummary').textContent = 'TOWNS & ROUTES'; return; }
+  const towns = state.towns.filter(t => t.kind !== 'landmark').sort((a, b) => (b.kind === 'city') - (a.kind === 'city') || (b.score||0) - (a.score||0));
+  const lms = state.towns.filter(t => t.kind === 'landmark');
+  const order = state.routes.map((r, i) => i).sort((a, b) => (state.routes[a].num ?? 1e9) - (state.routes[b].num ?? 1e9));
+  $('listSummary').textContent = `TOWNS & ROUTES (${towns.length} · ${state.routes.length})`;
+  const icon = t => t.kind === 'city' ? '🔴' : t.kind === 'town' ? '🟥' : '🔷';
+  const isSel = (type, id) => state.sel && state.sel.type === type && (type === 'town' ? state.sel.id === id : state.sel.idx === id);
+  const row = (type, id, k, name, sub) => `<tr class="item${isSel(type, id) ? ' sel' : ''}" data-type="${type}" data-id="${id}">
+      <td class="k">${k}</td><td>${esc(name)}<br><span style="opacity:.6;font-size:11px">${sub}</span></td>
+      <td class="ed"><button data-edit="1" title="Rename">✎</button></td></tr>`;
+  body.innerHTML =
+    `<h4 class="pixel">TOWNS</h4><table>${towns.map(t => row('town', t.id, icon(t),
+       t.name, `${t.kind === 'city' ? (t.size === 2 ? 'Big city' : 'City') : 'Town'}${t.id === state.startId ? ' · Start' : ''}${t.locked ? ' · 🔒' : ''}`)).join('')}</table>` +
+    (lms.length ? `<h4 class="pixel">LANDMARKS</h4><table>${lms.map(t => row('town', t.id, icon(t), t.name, t.locked ? '🔒 Locked' : 'Landmark')).join('')}</table>` : '') +
+    `<h4 class="pixel">ROUTES</h4><table>${order.map(i => { const r = state.routes[i];
+       return row('route', i, '〰', r.name || 'Route', `${esc(townById(r.a)?.name || '?')} ↔ ${esc(townById(r.b)?.name || '?')} · ${fmtKm(routeProfile(routePaths()[i].squares).km)}${r.custom ? ' · your name' : ''}`); }).join('')}</table>`;
+}
+$('listBody').addEventListener('click', async e => {
+  const tr = e.target.closest('tr.item'); if (!tr) return;
+  const type = tr.dataset.type, id = +tr.dataset.id;
+  if (e.target.closest('[data-edit]')){                        // rename in place
+    const cur = type === 'town' ? townById(id) : state.routes[id];
+    const v = await askText(type === 'town' ? 'Rename this place:' : 'Rename this route:', cur.name);
+    if (!v || !v.trim()) return;
+    pushUndo(); cur.name = v.trim(); if (type === 'route') cur.custom = true;
+    renumber(); render(); showInfo(); return;
   }
-  const sorted = Array.from(e).sort((a, b) => a - b), q = p => sorted[Math.floor(p*(sorted.length-1))];
-  const sea = q(0.42), top = q(1);
-  const terr = new Uint8Array(SW*SH), elev = new Float32Array(SW*SH);
-  const land = Array.from(e).filter(v => v > sea).sort((a, b) => a - b), ql = p => land[Math.floor(p*(land.length-1))];
-  const hillT = ql(0.55), mtnT = ql(0.84), peakT = ql(0.97);
-  for (let i = 0; i < SW*SH; i++){
-    elev[i] = (e[i] - sea)/(top - sea)*2600;
-    terr[i] = e[i] <= sea ? T.SEA : e[i] > peakT ? T.PEAK : e[i] > mtnT ? T.MTN : e[i] > hillT ? T.HILL : T.LAND;
-  }
-  // Rivers: start high, flow downhill until they reach water
-  const river = new Uint8Array(SW*SH), names = new Map();
-  const highs = []; for (let i = 0; i < SW*SH; i++) if (terr[i] >= T.MTN) highs.push(i);
-  shuffle(highs);
-  const rnames = shuffle(RIVER_NAMES.slice()); let made = 0;
-  for (const src of highs){
-    if (made >= 3) break;
-    let i = src; const path = []; const seen = new Set();
-    while (terr[i] !== T.SEA && path.length < 300 && !seen.has(i)){
-      seen.add(i); path.push(i);
-      const x = i % SW, y = (i/SW) | 0; let best = -1, bv = Infinity;
-      for (let d = 0; d < 4; d++){
-        const nx = x+DX[d], ny = y+DY[d]; if (!inSub(nx, ny)) continue;
-        const j = ny*SW + nx; if (!seen.has(j) && e[j] < bv){ bv = e[j]; best = j; }
-      }
-      if (best < 0) break;
-      i = best;
-    }
-    if (terr[i] !== T.SEA || path.length < 18 || path.some(p => river[p])) continue;
-    const name = rnames[made++];
-    for (const p of path) if (terr[p] < T.MTN){ river[p] = 1; names.set(Math.floor(((p/SW)|0)/SUB)*MW + Math.floor((p % SW)/SUB), name); }
-  }
-  state.terrain = terr; state.elev = elev; state.river = river; state.riverNames = names;
-  derive();
+  if (type === 'town'){ const t = townById(id); state.sel = { type:'town', id }; state.cursor = { x:t.x, y:t.y }; }
+  else { const sq = routePaths()[id].squares; state.sel = { type:'route', idx:id }; state.cursor = { ...sq[Math.floor(sq.length/2)] }; }
+  cursorOn = true; render(); showInfo();
+  $('region').scrollIntoView({ behavior:'smooth', block:'nearest' });
+});
+
+// ===== Real-map overlay =====
+// The town map drawn on the Leaflet map over its true footprint (rotation included), so you can check
+// it against the real geography. A canvas in Leaflet's overlay pane, re-positioned whenever the map moves.
+const ovCanvas = document.createElement('canvas'); ovCanvas.width = cv.width; ovCanvas.height = cv.height;
+ovCanvas.className = 'townOverlay leaflet-zoom-hide';
+const ovCtx = ovCanvas.getContext('2d');
+let overlayAdded = false;
+function placeOverlay(){
+  if (!overlayAdded || !state.gen?.b.corners) return;
+  const c = state.gen.b.corners, tl = map.latLngToLayerPoint(c.tl), tr = map.latLngToLayerPoint(c.tr), bl = map.latLngToLayerPoint(c.bl);
+  const w = Math.hypot(tr.x - tl.x, tr.y - tl.y), h = Math.hypot(bl.x - tl.x, bl.y - tl.y), ang = Math.atan2(tr.y - tl.y, tr.x - tl.x);
+  Object.assign(ovCanvas.style, { width:w + 'px', height:h + 'px', transform:`translate(${tl.x}px, ${tl.y}px) rotate(${ang}rad)` });
+}
+function updateOverlay(){
+  const want = $('overlayOn').checked && !!state.terrain && !state.forging;
+  if (want && !overlayAdded){ map.getPanes().overlayPane.appendChild(ovCanvas); overlayAdded = true; placeOverlay(); }
+  if (!want && overlayAdded){ ovCanvas.remove(); overlayAdded = false; }
+  if (!overlayAdded) return;
+  ovCanvas.style.opacity = (+$('overlayOpacity').value)/100;
+  ovCtx.clearRect(0, 0, ovCanvas.width, ovCanvas.height); ovCtx.drawImage(cv, 0, 0);
+}
+map.on('zoomend moveend viewreset resize', placeOverlay);
+$('overlayOn').onchange = () => { updateOverlay(); placeOverlay(); };
+$('overlayOpacity').oninput = updateOverlay;
+
+// ===== Share links =====
+// The link carries the frame (centre, km per square, rotation), the seed, the layout number and the
+// generation settings. Opening it re-forges the same region. Hand edits travel by JSON file instead.
+function shareUrl(){
+  const b = state.gen.b, c = b.corners, ctr = b.center || { lat:(c.tl.lat + c.br.lat)/2, lng:(c.tl.lng + c.br.lng)/2 };
+  const q = new URLSearchParams({ lat:ctr.lat.toFixed(6), lng:ctr.lng.toFixed(6), kps:String(+b.kmPerSquare), rot:String(b.rot || 0),
+    seed:String(state.seed), layout:String(state.variant || 0), towns:$('townCount').value, extra:$('extraCount').value,
+    lm:$('landmarks').checked ? '1' : '0', bendy:$('bendy').value, style:$('flavorNames').checked ? '1' : '0', theme:$('theme').value });
+  if (state.regionNameCustom) q.set('name', state.regionName);
+  return location.href.split('#')[0] + '#' + q.toString();
+}
+$('shareBtn').onclick = async () => {
+  if (!state.terrain){ setStatus('Forge a region first, then share it.'); return; }
+  const url = shareUrl(), out = $('shareOut');
+  out.value = url; out.style.display = 'block'; out.select();
+  const edited = state.towns.some(t => t.locked) || state.routes.some(r => r.custom);
+  try { await navigator.clipboard.writeText(url); setStatus('Link copied!' + (edited ? ' (Hand edits aren\'t in links: use EXPORT JSON to share those.)' : '')); }
+  catch (e) { setStatus('Copy the link below.' + (edited ? ' Hand edits aren\'t in links: use EXPORT JSON for those.' : '')); }
+};
+// Opening a share link: point the map at the frame, apply the settings, and forge with the same seed + layout
+function openShareLink(){
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (!q.has('lat') || !q.has('lng') || !q.has('kps')) return false;
+  const num = (k, d) => { const v = parseFloat(q.get(k)); return isFinite(v) ? v : d; };
+  const setSlider = (id, v) => { if (v == null) return; $(id).value = v; const o = $(id.replace('Count', 'Out')); if (o && o !== $(id)) o.textContent = v; };
+  setSlider('townCount', q.get('towns')); setSlider('extraCount', q.get('extra'));
+  if (q.has('lm')) $('landmarks').checked = q.get('lm') === '1';
+  if (q.has('bendy')){ $('bendy').value = q.get('bendy'); setBendyLabel(); }
+  if (q.has('style')) $('flavorNames').checked = q.get('style') === '1';
+  if (q.has('theme') && [...$('theme').options].some(o => o.value === q.get('theme'))){ $('theme').value = q.get('theme'); refreshTheme(); }
+  rot = ((num('rot', 0) % 360) + 360) % 360; $('rotOut').textContent = rot + '°'; placeFrame();
+  map.setView([num('lat', 0), num('lng', 0)], map.getZoom(), { animate:false });
+  setKps(num('kps', 5));
+  setStatus('Opening a shared region…');
+  forge({ seed:Math.round(num('seed', 0)), variant:Math.round(num('layout', 0)), regionName:q.get('name') || '' });
+  return true;
 }
 
-function demoTowns(count, wantLandmarks){
-  const names = shuffle(DEMO_NAMES.slice(0, 16)), lmNames = shuffle(DEMO_NAMES.slice(16));
-  const spacing = Math.max(2.5, Math.sqrt(MW*MH/count)*0.65), towns = [];
-  const ok = (x, y) => inSq(x, y) && sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain';
-  for (let tries = 0; towns.length < count && tries < 3000; tries++){
-    const c = { x:Math.floor(Math.random()*MW), y:Math.floor(Math.random()*MH) };
-    const sp = tries < 1500 ? spacing : spacing*0.7;
-    if (!ok(c.x, c.y) || !towns.every(o => dist(o, c) >= sp)) continue;
-    towns.push({ id:newId(), name:names[towns.length % names.length], x:c.x, y:c.y, kind:'town', size:1, score:Math.random()*3 });
-  }
-  towns.sort((a, b) => b.score - a.score);
-  const nCities = Math.max(1, Math.round(count/5));
-  towns.slice(0, nCities).forEach(t => t.kind = 'city');
-  towns.slice(0, Math.ceil(nCities/2)).forEach(t => makeBig(t, towns, true));
-  if (wantLandmarks)
-    for (let k = 0, tries = 0; k < Math.round(count/2) && tries < 500; tries++){
-      const c = { x:Math.floor(Math.random()*MW), y:Math.floor(Math.random()*MH) };
-      if (!inSq(c.x, c.y) || sqKind(c.x, c.y) === 'water' || !towns.every(o => footprint(o).every(f => cheb(f, c) >= 2))) continue;
-      towns.push({ id:newId(), name:lmNames[k++ % lmNames.length], x:c.x, y:c.y, kind:'landmark', size:1, score:0 });
-    }
-  return towns;
+// ===== Snapshots: undo/redo, auto-save, import =====
+// An undo step copies only what edits can change (terrain, towns, routes, a few settings); the heavy
+// read-only data (elevation, roads, rivers, name maps) is shared by reference, so 50 steps cost little.
+const UNDO_LIMIT = 50, SAVE_KEY = 'regionMapForge.region.v1';
+let undoStack = [], redoStack = [];
+function takeSnap(over = {}){
+  return {
+    terrain:state.terrain.slice(), towns:structuredClone(state.towns), routes:structuredClone(state.routes),
+    startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant,
+    regionName:state.regionName, regionNameCustom:state.regionNameCustom,
+    flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
+    shared:{ elev:state.elev, river:state.river, riverNames:state.riverNames, roadSq:state.roadSq, roadEdges:state.roadEdges,
+             roadEdgeName:state.roadEdgeName, names:state.names, gen:state.gen, notes:state.notes, timings:state.timings, source:state.source }
+  };
 }
-
-function forge(){
-  state.seed = Math.floor(Math.random()*1e6); state.nextId = 1; state.notes = [];
-  state.roadSq = new Float32Array(MW*MH); state.roadEdges = new Set();
-  demoTerrain();
-  state.towns = demoTowns(+$('townCount').value, $('landmarks').checked);
-  state.routes = buildRoutes(+$('extraCount').value);
-  snapLandmarks();
-  state.startId = null; state.sel = null; state.linkFrom = null;
+function applySnap(sn){
+  Object.assign(state, sn.shared);
+  Object.assign(state, { terrain:sn.terrain.slice(), towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
+    startId:sn.startId, nextId:sn.nextId, seed:sn.seed, variant:sn.variant || 0, sel:null, linkFrom:null,
+    regionName:sn.regionName || '', regionNameCustom:!!sn.regionNameCustom });
+  if (!state.regionName) suggestRegionName();
+  $('flavorNames').checked = sn.flavor; $('bendy').value = sn.bendy; setBendyLabel();
+  derive();                                          // rebuilds lakes + square summaries, clears the path cache
   renumber();
-  const st = townById(state.startId); state.cursor = st ? { x:st.x, y:st.y } : { x:0, y:0 };
+  const st = townById(state.startId); if (st) state.cursor = { x:st.x, y:st.y };
   render(); showInfo();
-  setStatus(`Generated ${state.towns.filter(t => t.kind !== 'landmark').length} towns and ${state.routes.length} routes.`);
 }
-$('forgeBtn').onclick = forge;
-$('bendy').oninput = () => {
+function pushUndo(over){
+  if (!state.terrain) return;
+  undoStack.push(takeSnap(over)); if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack = []; updateUndoButtons();
+}
+function dropLastUndo(){ undoStack.pop(); updateUndoButtons(); }
+function undo(){ if (!undoStack.length || state.forging) return; redoStack.push(takeSnap()); applySnap(undoStack.pop()); }
+function redo(){ if (!redoStack.length || state.forging) return; undoStack.push(takeSnap()); applySnap(redoStack.pop()); }
+function updateUndoButtons(){ $('undoBtn').disabled = !undoStack.length; $('redoBtn').disabled = !redoStack.length; }
+$('undoBtn').onclick = undo;
+$('redoBtn').onclick = redo;
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)){ e.preventDefault(); redo(); }
+});
+function setBendyLabel(){
   const v = +$('bendy').value;
   $('bendyOut').textContent = v < 20 ? 'STRAIGHT' : v < 40 ? 'MOSTLY STRAIGHT' : v <= 60 ? 'BALANCED' : v <= 80 ? 'WINDING' : 'VERY BENDY';
-  if (state.terrain && !state.forging){ pathCache.clear(); renumber(); render(); showInfo(); }
+}
+
+// --- Full region ⇄ plain JSON (typed arrays as base64, Maps/Sets as arrays) ---
+const toB64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+const f32ToB64 = f => toB64(new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
+const b64ToF32 = str => new Float32Array(fromB64(str).buffer);
+function serialize(){
+  const g = state.gen, c = g.b.corners, ll = p => ({ lat:p.lat, lng:p.lng }), n = state.names;
+  return {
+    format:'regionMapForge-editor/1', savedAt:new Date().toISOString(),
+    terrain:toB64(state.terrain), elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
+    riverNames:[...state.riverNames], roadSq:f32ToB64(state.roadSq), roadEdges:[...state.roadEdges], roadEdgeName:[...(state.roadEdgeName || [])],
+    names:n ? { lake:[...n.lake], sea:[...n.sea], range:[...n.range], land:[...n.land].map(([k, v]) => [k, { name:v.name, kind:v.kind }]), peaks:n.peaks } : null,
+    gen:{ z:g.z, o:g.o, ex:g.ex, ey:g.ey, det:g.det, b:{ ...g.b, corners:{ tl:ll(c.tl), tr:ll(c.tr), bl:ll(c.bl), br:ll(c.br) } } },
+    towns:state.towns, routes:state.routes.map(r => ({ a:r.a, b:r.b, name:r.name, custom:!!r.custom })),
+    startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant || 0, notes:state.notes,
+    regionName:state.regionName, regionNameCustom:!!state.regionNameCustom,
+    source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '']),
+                            landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '']) } : null,
+    ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value, theme:$('theme').value,
+         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked }
+  };
+}
+function deserialize(o){
+  const n = o.names;
+  return {
+    terrain:fromB64(o.terrain), towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
+    regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
+    flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
+    shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
+      roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(MW*MH), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []),
+      names:n ? { lake:new Map(n.lake), sea:new Map(n.sea), range:new Map(n.range), land:new Map(n.land), peaks:n.peaks } : null,
+      gen:o.gen, notes:o.notes || [], timings:{},
+      source:o.source ? { places:o.source.places.map(([name, lat, lon, pop, place, capital]) => ({ name, lat, lon, pop, place, capital })),
+                          landmarks:o.source.landmarks.map(([name, lat, lon, score, natural, kind]) => ({ name, lat, lon, score, natural:!!natural, kind })) } : null }
+  };
+}
+
+// Older exports (before editor state was included): rebuild what we can from the readable fields
+function fromLegacyExport(o){
+  if (!o.terrainSubGrid?.rows || !o.towns) throw new Error('not a Region Map Forge export');
+  const rows = o.terrainSubGrid.rows, terrain = new Uint8Array(SW*SH), river = new Uint8Array(SW*SH);
+  const code = { '~':T.SEA, 'o':T.SEA, '.':T.LAND, 'r':T.LAND, 'h':T.HILL, '^':T.MTN, 'A':T.PEAK };
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
+    const ch = rows[y]?.[x] ?? '.'; terrain[y*SW + x] = code[ch] ?? T.LAND; if (ch === 'r') river[y*SW + x] = 1;
+  }
+  const b = o.sourceBounds || {};
+  const corners = b.corners || { tl:{ lat:b.n, lng:b.w }, tr:{ lat:b.n, lng:b.e }, bl:{ lat:b.s, lng:b.w }, br:{ lat:b.s, lng:b.e } };
+  const gen = makeGen({ ...b, corners, rot:b.rot || 0 }, 12);
+  const towns = o.towns.map(t => {
+    const sq = t.squares || [{ x:t.x, y:t.y }];
+    return { id:t.id, name:t.name, kind:t.kind, x:sq[0].x, y:sq[0].y, size:sq.length > 1 ? 2 : 1,
+             dir:sq.length > 1 && sq[1].x === sq[0].x ? 'v' : 'h', score:t.start ? -1 : 0 };
+  });
+  const start = o.towns.find(t => t.start);
+  return {
+    terrain, towns, routes:(o.routes || []).map(r => ({ a:r.from, b:r.to, name:r.name, custom:!!r.customName })),
+    startId:start ? start.id : null, nextId:Math.max(0, ...towns.map(t => t.id)) + 1, seed:0, flavor:false, bendy:50, regionName:o.regionName || '',
+    shared:{ elev:null, river, riverNames:new Map(), roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(),
+             names:null, gen, notes:['Imported from an older export: elevation, roads and feature names weren\'t saved in it.'], timings:{}, source:null }
+  };
+}
+
+// Point the live map + frame at a restored region, so FORGE / overlay line up with it again
+function viewRegion(gen){
+  const c = gen.b.corners; if (!c) return;
+  const { lat, lng } = gen.b.center || { lat:(c.tl.lat + c.br.lat)/2, lng:(c.tl.lng + c.br.lng)/2 };
+  rot = gen.b.rot || 0; $('rotOut').textContent = rot + '°'; placeFrame();
+  map.setView([lat, lng], map.getZoom(), { animate:false });
+  if (gen.b.kmPerSquare) setKps(gen.b.kmPerSquare);
+}
+
+function loadRegion(o, howLabel){
+  const sn = o.format === 'regionMapForge-editor/1' ? deserialize(o) : o.editorState ? deserialize(o.editorState) : fromLegacyExport(o);
+  if (state.terrain) pushUndo();
+  applySnap(sn);
+  const ui = (o.editorState || o).ui;
+  if (ui?.theme){ $('theme').value = ui.theme; refreshTheme(); }
+  if (ui){ $('townCount').value = ui.townCount; $('townOut').textContent = ui.townCount;
+           $('extraCount').value = ui.extraCount; $('extraOut').textContent = ui.extraCount; $('landmarks').checked = ui.landmarks; }
+  viewRegion(state.gen);
+  setStatus(howLabel);
+}
+
+// Auto-save to this browser (debounced). Storage can be missing or full; the app works without it.
+let saveTimer = null;
+function scheduleSave(){
+  if (!state.terrain || state.forging) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(serialize())); $('saveState').textContent = 'Auto-saved ✓'; }
+    catch (e) { $('saveState').textContent = 'Auto-save unavailable'; }
+  }, 600);
+}
+function restoreSaved(){
+  let raw = null; try { raw = localStorage.getItem(SAVE_KEY); } catch (e) {}
+  if (!raw) return;
+  try {
+    const o = JSON.parse(raw);
+    loadRegion(o, `Restored your last region (saved ${new Date(o.savedAt).toLocaleString()}).`);
+    undoStack = []; redoStack = []; updateUndoButtons();
+  } catch (e) { setStatus('Couldn\'t restore the saved region.'); }
+}
+
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async () => {
+  const f = $('importFile').files[0]; if (!f) return;
+  try { loadRegion(JSON.parse(await f.text()), `Imported ${f.name}.`); $('townMapCard').scrollIntoView({ behavior:'smooth' }); }
+  catch (e) { setStatus('Import failed: ' + e.message); }
+  $('importFile').value = '';
 };
-$('rerouteBtn').onclick = () => {
-  if (!state.terrain) return;
-  state.routes = buildRoutes(+$('extraCount').value); snapLandmarks();
-  state.sel = null; renumber(); render(); showInfo();
-};
+
+// ===== Search =====
+async function search(){
+  const q = $('searchBox').value.trim(); if (!q) return;
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+    const [hit] = await res.json();
+    if (!hit){ setStatus('No place found.'); return; }
+    const bb = hit.boundingbox.map(Number);
+    map.fitBounds([[bb[0], bb[2]], [bb[1], bb[3]]]);
+  } catch (e) { setStatus('Search failed.'); }
+}
+$('searchBtn').onclick = search;
+$('searchBox').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
 
 // ===== Emerald-style cursor + location pop-up =====
 // One entry per square, like pokeemerald's region map section layout. Towns override landmarks override routes.
@@ -1014,7 +2196,7 @@ function buildLayout(){
   const layout = Array.from({ length:MH }, () => Array(MW).fill(null));
   const paths = routePaths();
   state.routes.forEach((r, i) => paths[i].squares.forEach(s => {
-    if (!layout[s.y][s.x]) layout[s.y][s.x] = { mapsec:`MAPSEC_ROUTE_${r.num}`, name:`Route ${r.num}`,
+    if (!layout[s.y][s.x]) layout[s.y][s.x] = { mapsec:mapsecId(r.name || `Route ${r.num}`), name:r.name || `Route ${r.num}`,
       sub: sqKind(s.x, s.y) === 'water' ? 'Sea route' : '' };
   }));
   const kindName = t => t.kind === 'city' ? (t.size === 2 ? 'Big city' : 'City') : t.kind === 'town' ? 'Town' : 'Landmark';
@@ -1022,16 +2204,19 @@ function buildLayout(){
     state.towns.filter(t => t.kind === kind).forEach(t => footprint(t).forEach(f => {
       const under = layout[f.y][f.x];
       layout[f.y][f.x] = { mapsec:mapsecId(t.name), name:t.name,
-        sub: kind === 'landmark' && under ? `${kindName(t)} · ${under.name}` : kindName(t) + (t.id === state.startId ? ' · Start' : '') };
+        sub: (kind === 'landmark' && under ? `${kindName(t)} · ${under.name}` : kindName(t) + (t.id === state.startId ? ' · Start' : '')) + (t.locked ? ' · Locked' : '') };
     }));
   return layout;
 }
 function updatePopup(){
   const pop = $('popup');
-  if (!state.terrain){ pop.style.display = 'none'; return; }
+  if (!state.terrain || reveal){ pop.style.display = 'none'; return; }
   const e = buildLayout()[state.cursor.y][state.cursor.x];
   if (!e){ pop.style.display = 'none'; return; }
-  pop.innerHTML = `${esc(e.name)}${e.sub ? `<small>${esc(e.sub)}</small>` : ''}`;
+  const html = `${esc(e.name)}${e.sub ? `<small>${esc(e.sub)}</small>` : ''}`;
+  if (html !== pop.innerHTML || pop.style.display === 'none'){          // slide in when the place changes
+    pop.innerHTML = html; pop.classList.remove('enter'); void pop.offsetWidth; pop.classList.add('enter');
+  }
   // Stay out of the cursor's way: jump to the right when the cursor is in the top-left corner
   pop.classList.toggle('right', state.cursor.x < MW*0.55 && state.cursor.y < MH*0.5);
   pop.style.display = 'block';
@@ -1069,14 +2254,302 @@ document.addEventListener('keydown', e => {
   if (m){ e.preventDefault(); moveCursor(state.cursor.x+m[0], state.cursor.y+m[1]); }
 });
 
+// ===== Export =====
+function download(name, blob){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+// Render a clean frame (no cursor, selection or reveal) for exporting
+function cleanFrame(){
+  const keep = { sel:state.sel, link:state.linkFrom, cur:cursorOn, rev:reveal };
+  state.sel = null; state.linkFrom = null; cursorOn = false; reveal = null; render();
+  return () => { state.sel = keep.sel; state.linkFrom = keep.link; cursorOn = keep.cur; reveal = keep.rev; render(); };
+}
+$('pngRawBtn').onclick = () => {
+  if (!state.terrain) return;
+  const restore = cleanFrame();
+  const big = document.createElement('canvas'); big.width = cv.width*4; big.height = cv.height*4;
+  const bctx = big.getContext('2d'); bctx.imageSmoothingEnabled = false; bctx.drawImage(cv, 0, 0, big.width, big.height);
+  restore();
+  big.toBlob(b => download('regionMap-map.png', b));
+};
+// Poster: title bar, the map, north arrow, scale bar (km + miles), a legend in the current theme, and credits
+$('pngBtn').onclick = async () => {
+  if (!state.terrain) return;
+  if (document.fonts) await document.fonts.ready;
+  const restore = cleanFrame();
+  const S = 3, mapW = cv.width*S, mapH = cv.height*S, pad = 18, titleH = 50, legendH = 104;
+  const P = document.createElement('canvas'); P.width = mapW + pad*2; P.height = titleH + mapH + legendH + pad*2;
+  const g = P.getContext('2d'); g.imageSmoothingEnabled = false;
+  const pix = '"Press Start 2P", monospace', sans = 'system-ui, -apple-system, sans-serif';
+  g.fillStyle = '#1c2440'; g.fillRect(0, 0, P.width, P.height);
+  // title
+  const kps = kmPerSquare(), title = (state.regionName || 'Region').toUpperCase();
+  g.fillStyle = '#000'; g.font = `18px ${pix}`; g.fillText(title, pad + 2, pad + 26);
+  g.fillStyle = '#ffffff'; g.fillText(title, pad, pad + 24);
+  g.font = `13px ${sans}`; g.fillStyle = '#b8c4f0'; g.textAlign = 'right';
+  g.fillText(`${MW}×${MH} squares · ${fmtKm(kps)} per square · ≈ 1:${Math.round(kps*RF_PER_KPS).toLocaleString()}`, P.width - pad, pad + 22);
+  g.textAlign = 'left';
+  // map
+  const mx = pad, my = pad + titleH;
+  g.fillStyle = '#000'; g.fillRect(mx - 3, my - 3, mapW + 6, mapH + 6);
+  g.drawImage(cv, mx, my, mapW, mapH);
+  restore();
+  // north arrow (always on the poster; points to true north even when the frame is rotated)
+  const th = (state.gen?.b.rot || 0)*Math.PI/180, nx = mx + mapW - 30, ny = my + 30, ux = -Math.sin(th), uy = -Math.cos(th);
+  g.fillStyle = 'rgba(0,0,0,.55)'; g.beginPath(); g.arc(nx, ny, 20, 0, Math.PI*2); g.fill();
+  g.fillStyle = '#f83030'; g.beginPath(); g.moveTo(nx + ux*15, ny + uy*15); g.lineTo(nx - uy*6, ny + ux*6); g.lineTo(nx + uy*6, ny - ux*6); g.fill();
+  g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(nx - ux*15, ny - uy*15); g.lineTo(nx - uy*6, ny + ux*6); g.lineTo(nx + uy*6, ny - ux*6); g.fill();
+  g.font = `9px ${pix}`; g.textAlign = 'center'; g.fillText('N', nx + ux*28 - 0, ny + uy*28 + 4); g.textAlign = 'left';
+  // scale bar: a "nice" length (1, 2 or 5 × 10ⁿ km) no wider than a quarter of the map
+  const pxPerKm = mapW/(MW*kps), maxKm = mapW*0.25/pxPerKm;
+  const mag = Math.pow(10, Math.floor(Math.log10(maxKm))), niceKm = [5, 2, 1].map(f => f*mag).find(v => v <= maxKm) || mag;
+  const bw = niceKm*pxPerKm, sx = pad, sy = my + mapH + 28;
+  for (let k = 0; k < 4; k++){ g.fillStyle = k % 2 ? '#ffffff' : '#000000'; g.fillRect(sx + k*bw/4, sy, bw/4, 8); }
+  g.strokeStyle = '#ffffff'; g.lineWidth = 1; g.strokeRect(sx + .5, sy + .5, bw - 1, 7);
+  g.fillStyle = '#e8ecf8'; g.font = `12px ${sans}`;
+  g.fillText('0', sx - 3, sy + 24);
+  const scaleLabel = `${fmtKm(niceKm)} (${(niceKm*0.621371).toFixed(niceKm < 5 ? 1 : 0)} mi)`;
+  g.fillText(scaleLabel, sx + bw + 8, sy + 9);
+  // legend (swatches in the current theme's colours)
+  const tc = hex => { const fn = themeNow.fn; if (!fn) return hex; const n = parseInt(hex.slice(1), 16), c = fn(n >> 16, (n >> 8) & 255, n & 255);
+    return `rgb(${c.map(clamp8).join(',')})`; };
+  const items = [
+    ['Big city', (x, y) => { g.fillStyle = tc(PAL.cOut); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.cFill); g.fillRect(x+2, y+2, 18, 8); }],
+    ['City / town', (x, y) => { g.fillStyle = tc(PAL.tOut); g.fillRect(x+5, y, 12, 12); g.fillStyle = tc(PAL.tFill); g.fillRect(x+7, y+2, 8, 8); }],
+    ['Landmark', (x, y) => { g.fillStyle = tc(PAL.lOut); g.fillRect(x+3, y+2, 16, 9); g.fillStyle = tc(PAL.lFill); g.fillRect(x+5, y+4, 12, 5); }],
+    ['Route', (x, y) => { g.fillStyle = tc(PAL.rOut); g.fillRect(x, y+2, 22, 9); g.fillStyle = tc(PAL.rFill); g.fillRect(x, y+4, 22, 5); }],
+    ['Sea route', (x, y) => { g.fillStyle = tc(PAL.sOut); g.fillRect(x, y+2, 22, 9); g.fillStyle = tc(PAL.sFill); g.fillRect(x, y+4, 22, 5); }],
+    ['River', (x, y) => { g.fillStyle = tc(PAL.land2); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.river); g.fillRect(x, y+5, 22, 3); }],
+    ['Mountains', (x, y) => { g.fillStyle = tc(PAL.mtn); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.mtnHi); g.fillRect(x, y, 22, 2); g.fillStyle = tc(PAL.peak); g.fillRect(x+8, y, 6, 4); }],
+    ['Water', (x, y) => { g.fillStyle = tc(PAL.deep); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.shallow); g.fillRect(x, y, 22, 3); }]
+  ];
+  const lx0 = sx + bw + 8 + g.measureText(scaleLabel).width + 34, colW = (P.width - pad - lx0)/3;
+  g.font = `12px ${sans}`;
+  items.forEach(([label, draw], i) => {
+    const x = lx0 + (i % 3)*colW, y = my + mapH + 16 + Math.floor(i/3)*26;
+    draw(x, y); g.fillStyle = '#e8ecf8'; g.fillText(label, x + 28, y + 11);
+  });
+  g.font = `10px ${sans}`; g.fillStyle = '#8890b0';
+  g.fillText('Data: Natural Earth · GeoNames (CC BY 4.0) · © OpenStreetMap contributors · Terrain Tiles (AWS) · made with Region Map Forge', pad, P.height - pad + 4);
+  P.toBlob(b => download('regionMap.png', b));
+};
 const mapsecId = name => 'MAPSEC_' + String(name).normalize('NFD').replace(/[^\w\s]/g, '').trim().toUpperCase().replace(/\s+/g, '_');
+$('jsonBtn').onclick = () => {
+  if (!state.terrain) return;
+  // Emerald-style section layout: one MAPSEC per square (like region_map_section_layout)
+  const layout = buildLayout().map(row => row.map(e => e ? e.mapsec : 'MAPSEC_NONE'));
+  const paths = routePaths();
+  const chars = { [T.SEA]:'~', [T.LAND]:'.', [T.HILL]:'h', [T.MTN]:'^', [T.PEAK]:'A' };
+  const terrain = [];
+  for (let y = 0; y < SH; y++){
+    let row = '';
+    for (let x = 0; x < SW; x++){ const i = y*SW + x; row += state.lake[i] ? 'o' : (state.river && state.river[i] && state.terrain[i] !== T.SEA) ? 'r' : chars[state.terrain[i]]; }
+    terrain.push(row);
+  }
+  const out = {
+    format:'regionMapForge/v2', regionName:state.regionName,
+    emerald:{ width:MW, height:MH, tilePx:TILE, layout },
+    terrainLegend:{ '~':'sea', 'o':'lake', 'r':'river', '.':'land', 'h':'hills', '^':'mountain', 'A':'peak' },
+    terrainSubGrid:{ width:SW, height:SH, rows:terrain },
+    sourceBounds:state.gen.b,
+    towns: state.towns.map(t => { const ll = toLatLng(t.x, t.y);
+      return { id:t.id, name:t.name, mapsec:mapsecId(t.name), kind:t.kind, squares:footprint(t),
+               lat:+ll.lat.toFixed(5), lng:+ll.lng.toFixed(5), start:t.id === state.startId }; }),
+    routes: state.routes.map((r, i) => ({ name:r.name, mapsec:mapsecId(r.name || `Route ${r.num}`), order:r.num, customName:!!r.custom, from:r.a, to:r.b,
+      squares:paths[i].squares.length, corners:corners(paths[i].squares),
+      roadFollowPct:Math.round(paths[i].roadFrac*100), seaRoute:paths[i].waterFrac > 0.5 }))
+  };
+  out.editorState = serialize();                   // lets IMPORT JSON restore the region exactly
+  download('regionMap.json', new Blob([JSON.stringify(out, null, 2)], { type:'application/json' }));
+};
 
 // ===== Slider labels + first paint =====
 $('townCount').oninput = e => $('townOut').textContent = e.target.value;
 $('extraCount').oninput = e => $('extraOut').textContent = e.target.value;
 document.fonts && document.fonts.ready.then(() => { if (!state.terrain) render(); });
 render(); showInfo();
-forge();
+if (!openShareLink()) restoreSaved();
+</script>
+<script>
+// ===== Mobile demo: fictional regions =====
+// Generates terrain, rivers, places and named features, then hands them to the same town picking,
+// routing, naming, reroll, lock, theme and animation code as the full version.
+function askText(label, def){                      // in-page replacement for prompt()
+  return new Promise(resolve => {
+    $('dlgLabel').textContent = label; $('dlgInput').value = def || ''; $('dlg').style.display = 'flex';
+    const done = v => { $('dlg').style.display = 'none'; $('dlgOk').onclick = $('dlgCancel').onclick = null; resolve(v); };
+    $('dlgOk').onclick = () => done($('dlgInput').value);
+    $('dlgCancel').onclick = () => done(null);
+    $('dlgInput').onkeydown = e => { if (e.key === 'Enter') done($('dlgInput').value); };
+    setTimeout(() => $('dlgInput').focus(), 50);
+  });
+}
+showWiki = () => {};                               // the hosted demo can't reach Wikipedia
+
+const DEMO_KPS = 5;                                // km per grid square for fictional regions
+const SYL_A = ['Ash', 'Briar', 'Cinder', 'Dusk', 'Ember', 'Fern', 'Gale', 'Haven', 'Iris', 'Juniper', 'Kestrel', 'Lumen', 'Moss',
+  'Nimbus', 'Oak', 'Pebble', 'Quill', 'Rook', 'Sage', 'Thistle', 'Umber', 'Vale', 'Willow', 'Yarrow', 'Zephyr', 'Cobalt', 'Coral',
+  'Drift', 'Glimmer', 'Hollow', 'Lantern', 'Marrow', 'Opal', 'Saffron', 'Tamber', 'Wren', 'Bracken', 'Cairn', 'Heath', 'Sorrel'];
+const SYL_B = ['ton', 'ford', 'brook', 'wick', 'mere', 'vale', 'field', 'haven', 'port', 'crest', 'stead', 'bury', 'ridge', 'moor', 'dale', 'cliff'];
+function demoWord(rng, used){
+  for (let k = 0; k < 200; k++){
+    const w = SYL_A[Math.floor(rng()*SYL_A.length)] + (rng() < .65 ? SYL_B[Math.floor(rng()*SYL_B.length)] : '');
+    if (!used.has(w)){ used.add(w); return w; }
+  }
+  return 'Nameless';
+}
+const value2 = (rng) => (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), u = x - xi, v = y - yi, sm = t => t*t*(3 - 2*t);
+  const h = (a, b) => hash(a + 1013, b + 2027); const a = h(xi, yi), b = h(xi + 1, yi), c = h(xi, yi + 1), d = h(xi + 1, yi + 1);
+  return a + (b - a)*sm(u) + (c - a)*sm(v) + (a - b - c + d)*sm(u)*sm(v); };
+
+function demoBounds(rng){
+  // A pretend location: a mid-northern latitude, at the longitude of your time zone (for the Live theme)
+  const lat = 34 + rng()*14, lng = Math.max(-179, Math.min(179, -new Date().getTimezoneOffset()/4));
+  const wKm = MW*DEMO_KPS, hKm = MH*DEMO_KPS, dLng = wKm/(111.32*Math.cos(lat*Math.PI/180)), dLat = hKm/110.57;
+  const c = { tl:{ lat:lat + dLat/2, lng:lng - dLng/2 }, tr:{ lat:lat + dLat/2, lng:lng + dLng/2 },
+              bl:{ lat:lat - dLat/2, lng:lng - dLng/2 }, br:{ lat:lat - dLat/2, lng:lng + dLng/2 } };
+  return { n:c.tl.lat, s:c.bl.lat, w:c.tl.lng, e:c.tr.lng, corners:c, center:{ lat, lng }, rot:0, kmPerSquare:DEMO_KPS, wKm, hKm };
+}
+
+function demoTerrain(rng, used){
+  const noise = value2(rng), fbm = (x, y) => { let s = 0, amp = 1, f = 1, n = 0; for (let o = 0; o < 5; o++){ s += noise(x*f, y*f)*amp; n += amp; amp *= .5; f *= 2; } return s/n; };
+  const e = new Float32Array(SW*SH), cx = .4 + rng()*.2, cy = .4 + rng()*.2;
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
+    const dx = (x/SW - cx)*1.6, dy = (y/SH - cy)*1.9;
+    e[y*SW + x] = fbm(x/22, y/22) - Math.sqrt(dx*dx + dy*dy)*.55;
+  }
+  const sorted = Array.from(e).sort((a, b) => a - b), q = p => sorted[Math.floor(p*(sorted.length - 1))];
+  const sea = q(.42), top = q(1);
+  const land = Array.from(e).filter(v => v > sea).sort((a, b) => a - b), ql = p => land[Math.floor(p*(land.length - 1))];
+  const hillT = ql(.55), mtnT = ql(.84), peakT = ql(.97);
+  const terr = new Uint8Array(SW*SH), elev = new Float32Array(SW*SH);
+  for (let i = 0; i < SW*SH; i++){
+    elev[i] = (e[i] - sea)/(top - sea)*2600;
+    terr[i] = e[i] <= sea ? T.SEA : e[i] > peakT ? T.PEAK : e[i] > mtnT ? T.MTN : e[i] > hillT ? T.HILL : T.LAND;
+  }
+  // Rivers start high and run downhill until they reach water
+  const river = new Uint8Array(SW*SH), names = new Map(), highs = [];
+  for (let i = 0; i < SW*SH; i++) if (terr[i] >= T.MTN) highs.push(i);
+  for (let i = highs.length - 1; i > 0; i--){ const j = Math.floor(rng()*(i + 1)); [highs[i], highs[j]] = [highs[j], highs[i]]; }
+  let made = 0;
+  for (const src of highs){
+    if (made >= 3) break;
+    let i = src; const path = [], seen = new Set();
+    while (terr[i] !== T.SEA && path.length < 300 && !seen.has(i)){
+      seen.add(i); path.push(i);
+      const x = i % SW, y = (i/SW) | 0; let best = -1, bv = Infinity;
+      for (let d = 0; d < 4; d++){ const nx = x + DX[d], ny = y + DY[d]; if (!inSub(nx, ny)) continue; const j = ny*SW + nx; if (!seen.has(j) && e[j] < bv){ bv = e[j]; best = j; } }
+      if (best < 0) break; i = best;
+    }
+    if (terr[i] !== T.SEA || path.length < 18 || path.some(p => river[p])) continue;
+    const name = demoWord(rng, used) + ' River'; made++;
+    for (const p of path) if (terr[p] < T.MTN){ river[p] = 1; names.set(Math.floor(((p/SW) | 0)/SUB)*MW + Math.floor((p % SW)/SUB), name); }
+  }
+  state.terrain = terr; state.elev = elev; state.river = river; state.riverNames = names;
+  derive();
+}
+
+// Named seas, lakes, ranges, plains and peaks (for route names and landmarks)
+function demoFeatures(rng, used){
+  const N = { lake:new Map(), sea:new Map(), range:new Map(), land:new Map(), peaks:[] }, landmarks = [];
+  const isLake = (x, y) => state.lake[(y*SUB + 2)*SW + x*SUB + 2] === 1;
+  const comps = test => { const seen = new Set(), out = [];
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++){
+      const k = y*MW + x; if (seen.has(k) || !test(x, y)) continue;
+      const cells = [[x, y]]; seen.add(k);
+      for (let h = 0; h < cells.length; h++){ const [cx, cy] = cells[h];
+        for (let d = 0; d < 4; d++){ const nx = cx + DX[d], ny = cy + DY[d], nk = ny*MW + nx; if (inSq(nx, ny) && !seen.has(nk) && test(nx, ny)){ seen.add(nk); cells.push([nx, ny]); } } }
+      out.push(cells);
+    } return out; };
+  const centre = cells => cells.reduce((a, [x, y]) => [a[0] + x/cells.length, a[1] + y/cells.length], [0, 0]);
+  const seaName = `${demoWord(rng, used)} ${rng() < .5 ? 'Sea' : 'Bay'}`;
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) if (sqKind(x, y) === 'water' && !isLake(x, y)) N.sea.set(y*MW + x, seaName);
+  for (const cells of comps((x, y) => sqKind(x, y) === 'water' && isLake(x, y))){
+    const name = 'Lake ' + demoWord(rng, used); cells.forEach(([x, y]) => N.lake.set(y*MW + x, name));
+    const [cx, cy] = centre(cells), ll = toLatLng(cx, cy);
+    landmarks.push({ name, lat:ll.lat, lon:ll.lng, score:1.5, natural:true, kind:'water' });
+  }
+  for (const cells of comps((x, y) => sqKind(x, y) === 'mountain' || sqKind(x, y) === 'hill')){
+    if (cells.length < 4) continue;
+    const base = demoWord(rng, used), range = `${base} Range`;
+    cells.forEach(([x, y]) => N.range.set(y*MW + x, range));
+    const top = cells.reduce((a, c) => state.sqElev[c[1]*MW + c[0]] > state.sqElev[a[1]*MW + a[0]] ? c : a);
+    const ll = toLatLng(top[0], top[1]), ele = state.sqElev[top[1]*MW + top[0]], peak = 'Mt. ' + base;
+    N.peaks.push({ name:peak, lat:ll.lat, lon:ll.lng });
+    landmarks.push({ name:peak, lat:ll.lat, lon:ll.lng, score:1 + ele/1000, natural:true, kind:'peak' });
+  }
+  for (const cells of comps((x, y) => sqKind(x, y) === 'land')){
+    if (cells.length < 25) continue;
+    const plain = { name:`${demoWord(rng, used)} ${rng() < .5 ? 'Plains' : 'Downs'}`, kind:'plain' };
+    cells.forEach(([x, y]) => N.land.set(y*MW + x, plain));
+  }
+  // a few made-up sights on dry land
+  const sights = ['Old Lighthouse', 'Starfall Ruins', 'Wind Tower', 'Glass Bridge', 'Ancient Grove', 'Sunken Pier', 'Echo Cave', 'Crystal Spring'];
+  for (let k = 0, tries = 0; k < 3 && tries < 300; tries++){
+    const x = Math.floor(rng()*MW), y = Math.floor(rng()*MH);
+    if (sqKind(x, y) === 'water') continue;
+    const ll = toLatLng(x, y); landmarks.push({ name:sights[Math.floor(rng()*sights.length)], lat:ll.lat, lon:ll.lng, score:.9, natural:false, kind:'' }); k++;
+  }
+  state.names = N;
+  return landmarks.filter((l, i, a) => a.findIndex(o => o.name === l.name) === i);
+}
+
+// Fictional towns: mostly small, a few big. Bigger ones get "City", mid-sized ones "Town", like the games.
+function demoPlaces(rng, used){
+  const places = [], taken = new Set();
+  for (let tries = 0; places.length < 70 && tries < 5000; tries++){
+    const x = Math.floor(rng()*MW), y = Math.floor(rng()*MH), k = sqKind(x, y);
+    if (k === 'water' || k === 'mountain' || taken.has(y*MW + x)) continue;
+    taken.add(y*MW + x);
+    const pop = Math.round(10 ** (2.9 + Math.pow(rng(), 1.6)*2.9));
+    const name = demoWord(rng, used) + (pop >= 150000 ? ' City' : pop >= 20000 ? ' Town' : '');
+    const ll = toLatLng(x - .5 + rng(), y - .5 + rng());
+    places.push({ name, lat:ll.lat, lon:ll.lng, pop, place:pop >= 100000 ? 'city' : pop >= 10000 ? 'town' : 'village', capital:'' });
+  }
+  return places;
+}
+
+// A few named roads linking the biggest places (a spanning tree), so routes can follow and be named after them
+const ROAD_NAMES = ['Old Coast Road', "King's Highway", 'Ridgeline Road', 'Lantern Way', 'Sunset Highway', "Miner's Road",
+  'Pilgrim Road', 'Harbor Road', 'Valley Highway', 'Market Road', 'Lighthouse Road', 'Meadow Way'];
+function demoRoads(rng, places){
+  const big = places.slice().sort((a, b) => b.pop - a.pop).slice(0, 7).map(p => ({ ...p, ...toSqF(p.lat, p.lon) }));
+  if (big.length < 2) return;
+  const names = ROAD_NAMES.slice().sort(() => rng() - .5), ways = [], inTree = [big[0]], rest = big.slice(1);
+  while (rest.length){
+    let best = null;
+    for (const a of inTree) for (const b of rest){ const d = Math.hypot(a.x - b.x, a.y - b.y); if (!best || d < best.d) best = { a, b, d }; }
+    rest.splice(rest.indexOf(best.b), 1); inTree.push(best.b);
+    const { a, b } = best, mx = (a.x + b.x)/2 + (rng() - .5)*2, my = (a.y + b.y)/2 + (rng() - .5)*2;   // a gentle bend
+    const pts = [a, { x:mx, y:my }, b].map(q => { const ll = toLatLng(q.x - .5, q.y - .5); return { lat:ll.lat, lon:ll.lng }; });
+    ways.push({ tags:{ highway:ways.length < 2 ? 'motorway' : 'trunk', name:names[ways.length % names.length] }, geometry:pts });
+  }
+  ingestRoads(ways);
+}
+
+function demoForge(){
+  if (state.forging) return;
+  if (state.terrain) pushUndo();
+  clearRegion();
+  state.seed = Math.floor(Math.random()*1e6); state.nextId = 1; state.variant = 0;
+  const rng = seededRng(state.seed), used = new Set();
+  state.gen = makeGen(demoBounds(rng), 10);
+  demoTerrain(rng, used);
+  const landmarks = demoFeatures(rng, used), places = demoPlaces(rng, used);
+  demoRoads(rng, places);
+  state.source = { places, landmarks };
+  state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks, { variant:0 });
+  state.routes = buildRoutes(+$('extraCount').value);
+  snapLandmarks(); renumber(); suggestRegionName();
+  const st = townById(state.startId); state.cursor = st ? { x:st.x, y:st.y } : { x:0, y:0 };
+  startReveal('terrain'); startReveal('routes');
+  refreshTheme(); render(); showInfo();
+  setStatus(`Generated ${state.towns.filter(t => t.kind !== 'landmark').length} towns and ${state.routes.length} routes.`);
+}
+$('forgeBtn').onclick = demoForge;
+if (!state.terrain) demoForge();                   // first visit: make a region straight away
 </script>
 </body>
 </html>
