@@ -60,6 +60,9 @@
     background:#f8f8f8;color:#303848;border:3px solid #485878;outline:2px solid #f8f8f8;border-radius:4px;
     box-shadow:inset 0 -3px 0 #c8d0e0, 0 2px 0 #0006;padding:7px 9px 8px;font-size:9px;line-height:1.3;text-transform:uppercase}
   .popup.right{left:auto;right:14px}
+  .popup.enter{animation:popIn .18s ease-out}
+  @keyframes popIn{from{transform:translateY(-6px);opacity:0}to{transform:none;opacity:1}}
+  @media (prefers-reduced-motion: reduce){.popup.enter{animation:none}}
   .popup small{display:block;font-size:7px;color:#6878a0;margin-top:5px}
   .dpad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,36px);gap:4px;justify-content:center;margin-top:10px}
   .dpad button{padding:0;font-size:12px}
@@ -121,6 +124,7 @@
       <label><input type="checkbox" id="showGrid"> Emerald grid</label>
       <label><input type="checkbox" id="showRoads"> Real roads</label>
       <label><input type="checkbox" id="showRivers" checked> Rivers</label>
+      <label><input type="checkbox" id="showClouds" checked> Clouds</label>
       <label><input type="checkbox" id="flavorNames"> Pokémon-style route names</label>
     </div>
     <div class="textbox pixel" id="infoBox"></div>
@@ -1128,55 +1132,179 @@ function drawPlaceholder(){
   } else { ctx.fillText('FRAME AN AREA ABOVE', 112, 56); ctx.fillText('THEN PRESS FORGE', 112, 70); }
 }
 
-function drawTerrain(){
+// ===== Layered rendering =====
+// Static layer: terrain, coastlines, rivers, grid and road overlay; rebuilt only when one of them changes.
+// Route layer: rebuilt only when routes, towns or the selection change. Each animation frame stacks the
+// cached layers and draws just the moving pixels (waves, river flow, clouds, pulse, marching ants, cursor).
+const staticLayer = document.createElement('canvas'); staticLayer.width = cv.width; staticLayer.height = cv.height;
+const sctx = staticLayer.getContext('2d');
+const spx = (x, y, w, h, c) => { sctx.fillStyle = c; sctx.fillRect(x, y, w, h); };
+const objIds = new WeakMap(); let nextObjId = 1;
+const idOf = o => o ? (objIds.get(o) || (objIds.set(o, nextObjId++), nextObjId - 1)) : 0;
+let staticKey = '', routeKey = '';
+const anim = { dashes:[], foam:[], glints:[], flow:[], clouds:[] };
+
+function buildStatic(){
   const t = state.terrain;
   const toLand = bfsSub(i => t[i] !== T.SEA), toWater = bfsSub(i => t[i] === T.SEA);
   const at = (x, y) => inSub(x, y) ? t[y*SW+x] : -1;
-  const waves = [];   // drawn after the base layer so drifting pixels aren't clipped by neighbours
+  anim.dashes = []; anim.foam = []; anim.glints = [];
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
     const i = sy*SW + sx, X = sx*SP, Y = sy*SP, v = t[i];
     if (v === T.SEA){
-      const d = toLand[i];
-      const h = hash(sx, sy), phase = Math.floor(hash(sy, sx)*64);
+      const d = toLand[i], h = hash(sx, sy), phase = Math.floor(hash(sy, sx)*64);
       if (state.lake[i]){
-        px(X, Y, SP, SP, d <= 1 ? PAL.shallow : PAL.mid);
-        if (d >= 2 && (phase + waveTick) % 40 === 0) waves.push([X, Y, 1, 1, PAL.shallow]);       // lake glint
+        spx(X, Y, SP, SP, d <= 1 ? PAL.shallow : PAL.mid);
+        if (d >= 2) anim.glints.push([X, Y, phase]);                          // lake glint spots
       } else {
-        px(X, Y, SP, SP, d <= 1 ? PAL.shallow : d <= 3 ? PAL.mid : PAL.deep);
-        // open-sea swells: short dashes that sway 0→1→2→1 px
-        if (d >= 4 && h > 0.9) waves.push([X + [0, 1, 2, 1][(waveTick + phase) % 4], Y+1, 3, 1, PAL.deep2]);
-        // shoreline sparkle: a foam pixel blinks on now and then
-        if (d === 1 && (phase + waveTick) % 28 === 0) waves.push([X + (h > .5 ? 1 : 0), Y, 1, 1, PAL.foam]);
+        spx(X, Y, SP, SP, d <= 1 ? PAL.shallow : d <= 3 ? PAL.mid : PAL.deep);
+        if (d >= 4 && h > 0.9) anim.dashes.push([X, Y+1, phase]);             // open-sea swell dashes
+        if (d === 1) anim.foam.push([X + (h > .5 ? 1 : 0), Y, phase]);         // shoreline sparkle spots
       }
     } else if (v === T.LAND){
       const blob = hash(sx >> 3, sy >> 3) > 0.55;
-      px(X, Y, SP, SP, toWater[i] <= 1 ? PAL.land1 : blob ? PAL.land3 : PAL.land2);
+      spx(X, Y, SP, SP, toWater[i] <= 1 ? PAL.land1 : blob ? PAL.land3 : PAL.land2);
     } else if (v === T.HILL){
-      px(X, Y, SP, SP, PAL.hill);
-      if ((sx + sy) % 3 === 0 && hash(sx, sy) > 0.5) px(X, Y, 1, 1, PAL.hillHi);
+      spx(X, Y, SP, SP, PAL.hill);
+      if ((sx + sy) % 3 === 0 && hash(sx, sy) > 0.5) spx(X, Y, 1, 1, PAL.hillHi);
     } else if (v === T.MTN){
-      px(X, Y, SP, SP, PAL.mtn);
-      if (at(sx, sy-1) < T.MTN) px(X, Y, SP, 1, PAL.mtnHi);          // sunlit top edge
-      if (at(sx, sy+1) < T.MTN) px(X, Y+SP-1, SP, 1, PAL.mtnLo);     // shadowed base
-      if (hash(sx, sy) > 0.85) px(X+1, Y, 1, 1, PAL.mtnHi);
+      spx(X, Y, SP, SP, PAL.mtn);
+      if (at(sx, sy-1) < T.MTN) spx(X, Y, SP, 1, PAL.mtnHi);          // sunlit top edge
+      if (at(sx, sy+1) < T.MTN) spx(X, Y+SP-1, SP, 1, PAL.mtnLo);     // shadowed base
+      if (hash(sx, sy) > 0.85) spx(X+1, Y, 1, 1, PAL.mtnHi);
     } else {
-      px(X, Y, SP, SP, PAL.peak);
-      if (at(sx, sy+1) !== T.PEAK) px(X, Y+SP-1, SP, 1, PAL.peakLo);
+      spx(X, Y, SP, SP, PAL.peak);
+      if (at(sx, sy+1) !== T.PEAK) spx(X, Y+SP-1, SP, 1, PAL.peakLo);
     }
   }
-  for (const w of waves) px(...w);
   // coastline: dark green on land, white foam on water
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
     if (t[sy*SW+sx] === T.SEA) continue;
     const X = sx*SP, Y = sy*SP;
-    if (at(sx, sy-1) === T.SEA){ px(X, Y, SP, 1, PAL.landEdge); px(X, Y-1, SP, 1, PAL.foam); }
-    if (at(sx, sy+1) === T.SEA){ px(X, Y+SP-1, SP, 1, PAL.landEdge); px(X, Y+SP, SP, 1, PAL.foam); }
-    if (at(sx-1, sy) === T.SEA){ px(X, Y, 1, SP, PAL.landEdge); px(X-1, Y, 1, SP, PAL.foam); }
-    if (at(sx+1, sy) === T.SEA){ px(X+SP-1, Y, 1, SP, PAL.landEdge); px(X+SP, Y, 1, SP, PAL.foam); }
+    if (at(sx, sy-1) === T.SEA){ spx(X, Y, SP, 1, PAL.landEdge); spx(X, Y-1, SP, 1, PAL.foam); }
+    if (at(sx, sy+1) === T.SEA){ spx(X, Y+SP-1, SP, 1, PAL.landEdge); spx(X, Y+SP, SP, 1, PAL.foam); }
+    if (at(sx-1, sy) === T.SEA){ spx(X, Y, 1, SP, PAL.landEdge); spx(X-1, Y, 1, SP, PAL.foam); }
+    if (at(sx+1, sy) === T.SEA){ spx(X+SP-1, Y, 1, SP, PAL.landEdge); spx(X+SP, Y, 1, SP, PAL.foam); }
   }
-  if (state.river && $('showRivers').checked)
+  const showRivers = state.river && $('showRivers').checked;
+  if (showRivers)
     for (let i = 0; i < SW*SH; i++)
-      if (state.river[i] && t[i] !== T.SEA) px((i % SW)*SP, ((i/SW) | 0)*SP, SP, SP, PAL.river);
+      if (state.river[i] && t[i] !== T.SEA) spx((i % SW)*SP, ((i/SW) | 0)*SP, SP, SP, PAL.river);
+  anim.flow = showRivers ? riverFlow() : [];
+  if ($('showGrid').checked){
+    sctx.fillStyle = 'rgba(0,0,0,.15)';
+    for (let x = 1; x < MW; x++) sctx.fillRect(x*TILE, 0, 1, cv.height);
+    for (let y = 1; y < MH; y++) sctx.fillRect(0, y*TILE, cv.width, 1);
+  }
+  if ($('showRoads').checked){
+    sctx.fillStyle = 'rgba(70,40,20,.7)';
+    for (const k of state.roadEdges){
+      const a = Math.floor(k/1000), b = k % 1000;
+      const ax = (a % MW)*TILE + 4, ay = ((a/MW) | 0)*TILE + 4, bx = (b % MW)*TILE + 4, by = ((b/MW) | 0)*TILE + 4;
+      sctx.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx-ax) + 1, Math.abs(by-ay) + 1);
+    }
+  }
+  anim.clouds = makeClouds();
+}
+
+// River flow: number every river cell by its distance from the river's mouth (where it meets water, or
+// failing that its lowest end by elevation). Light pixels then step toward lower numbers = downstream.
+function riverFlow(){
+  const r = state.river, t = state.terrain, e = state.elev;
+  const isR = i => r[i] && t[i] !== T.SEA, dist = new Int32Array(SW*SH).fill(-1), comp = new Int32Array(SW*SH).fill(-1);
+  const nbrs = i => { const x = i % SW, y = (i/SW) | 0, out = [];
+    for (let d = 0; d < 4; d++){ const nx = x+DX[d], ny = y+DY[d]; if (inSub(nx, ny)) out.push(ny*SW + nx); } return out; };
+  const out = [];
+  for (let s0 = 0; s0 < SW*SH; s0++){
+    if (!isR(s0) || comp[s0] >= 0) continue;
+    const cells = [s0]; comp[s0] = s0;                 // gather one connected river
+    for (let h = 0; h < cells.length; h++) for (const j of nbrs(cells[h])) if (isR(j) && comp[j] < 0){ comp[j] = s0; cells.push(j); }
+    const ends = cells.filter(i => nbrs(i).filter(isR).length <= 1);
+    let mouths = cells.filter(i => nbrs(i).some(j => t[j] === T.SEA));
+    if (e && mouths.length > 1){                       // lake-to-lake rivers (Utah Lake → Great Salt Lake): the lower end wins
+      const m = Math.min(...mouths.map(i => e[i])); mouths = mouths.filter(i => e[i] <= m + 15);
+    }
+    if (!mouths.length){
+      const pool = ends.length ? ends : cells;
+      const low = e ? pool.reduce((a, b) => e[b] < e[a] ? b : a)
+                    : pool.find(i => { const x = i % SW, y = (i/SW) | 0; return x === 0 || y === 0 || x === SW-1 || y === SH-1; }) ?? pool[0];
+      mouths = [low];
+    }
+    const q = [...mouths]; mouths.forEach(i => dist[i] = 0);
+    for (let h = 0; h < q.length; h++) for (const j of nbrs(q[h])) if (isR(j) && dist[j] < 0){ dist[j] = dist[q[h]] + 1; q.push(j); }
+    for (const i of cells) if (dist[i] >= 0) out.push([(i % SW)*SP, ((i/SW) | 0)*SP, dist[i]]);
+  }
+  return out;
+}
+
+// A few soft, blocky cloud shadows (built from overlapping rectangles, filled as one shape)
+function makeClouds(){
+  const rng = seededRng(state.seed*31 + 7), clouds = [];
+  for (let k = 0; k < 4; k++){
+    const w = 24 + Math.floor(rng()*26), h = 10 + Math.floor(rng()*8), rects = [];
+    for (let j = 0; j < 5; j++){
+      const rw = Math.round(w*(0.4 + rng()*0.5)/2)*2, rh = Math.round(h*(0.5 + rng()*0.5)/2)*2;
+      rects.push([Math.round(rng()*(w - rw)/2)*2, Math.round(rng()*(h - rh)/2)*2, rw, rh]);
+    }
+    clouds.push({ x0:rng()*(cv.width + 60), y:Math.floor(rng()*(cv.height - h)), w, rects, speed:0.35 + rng()*0.3 });
+  }
+  return clouds;
+}
+
+function buildRouteLayer(){
+  // routes: outline pass, then fill pass, so crossings merge cleanly; painted solid here and laid over
+  // the terrain at ROUTE_ALPHA in one go (blending each piece separately would darken overlaps)
+  const blocks = [], segs = [];
+  routePaths().forEach((p, ri) => {
+    const sel = state.sel && state.sel.type === 'route' && state.sel.idx === ri;
+    p.squares.forEach((s, k) => {
+      const water = sqKind(s.x, s.y) === 'water';
+      blocks.push({ x:s.x*TILE+4, y:s.y*TILE+4, water, sel });
+      if (k){ const pr = p.squares[k-1];
+        segs.push({ ax:pr.x*TILE+4, ay:pr.y*TILE+4, bx:s.x*TILE+4, by:s.y*TILE+4, water:water && sqKind(pr.x, pr.y) === 'water', sel }); }
+    });
+  });
+  const segRect = (s, pad) => [Math.min(s.ax, s.bx)-pad, Math.min(s.ay, s.by)-pad, Math.abs(s.bx-s.ax)+pad*2, Math.abs(s.by-s.ay)+pad*2];
+  rctx.clearRect(0, 0, routeLayer.width, routeLayer.height);
+  const rpx = (x, y, w, h, c) => { rctx.fillStyle = c; rctx.fillRect(x, y, w, h); };
+  for (const s of segs){ const [x, y, w, h] = segRect(s, 3); rpx(x, y, w, h, s.water ? PAL.sOut : PAL.rOut); }
+  for (const b of blocks) rpx(b.x-3, b.y-3, 6, 6, b.water ? PAL.sOut : PAL.rOut);
+  for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, s.water ? PAL.sFill : PAL.rFill); }
+  for (const b of blocks.filter(b => !b.sel)) rpx(b.x-2, b.y-2, 4, 4, b.water ? PAL.sFill : PAL.rFill);
+  for (const s of segs.filter(s => s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, PAL.rSel); }
+  for (const b of blocks.filter(b => b.sel)) rpx(b.x-2, b.y-2, 4, 4, PAL.rSel);
+}
+
+// --- per-frame animation pieces ---
+function drawWater(){
+  const tk = waveTick;
+  for (const [X, Y, ph] of anim.dashes) px(X + [0, 1, 2, 1][(tk + ph) % 4], Y, 3, 1, PAL.deep2);   // swells sway 0→1→2→1 px
+  for (const [X, Y, ph] of anim.foam) if ((ph + tk) % 28 === 0) px(X, Y, 1, 1, PAL.foam);          // shoreline sparkle
+  for (const [X, Y, ph] of anim.glints) if ((ph + tk) % 40 === 0) px(X, Y, 1, 1, PAL.shallow);    // lake glint
+  for (const [X, Y, d] of anim.flow) if ((((d + tk) % 5) + 5) % 5 === 0) px(X + (d & 1), Y + ((d >> 1) & 1), 1, 1, '#e4fbff');
+}
+function drawClouds(){
+  if (!$('showClouds').checked || !anim.clouds.length) return;
+  ctx.fillStyle = 'rgba(10,30,50,.14)'; ctx.beginPath();
+  for (const c of anim.clouds){
+    const span = cv.width + c.w + 20, x = Math.floor(((c.x0 + waveTick*c.speed) % span + span) % span) - c.w - 10;
+    for (const [dx, dy, w, h] of c.rects) ctx.rect(x + dx, c.y + dy, w, h);
+  }
+  ctx.fill();
+}
+function drawAnts(){                                   // marching ants along the selected route's centre line
+  if (!state.sel || state.sel.type !== 'route' || !state.routes[state.sel.idx]) return;
+  const sq = routePaths()[state.sel.idx].squares; let i = 0;
+  for (let k = 1; k < sq.length; k++){
+    const ax = sq[k-1].x*TILE + 4, ay = sq[k-1].y*TILE + 4, bx = sq[k].x*TILE + 4, by = sq[k].y*TILE + 4;
+    const sx = Math.sign(bx - ax), sy = Math.sign(by - ay);
+    for (let s = 0; s < TILE; s++, i++) if ((((i - waveTick) % 4) + 4) % 4 < 2) px(ax + sx*s, ay + sy*s, 1, 1, '#ffffff');
+  }
+}
+function drawStartPulse(box){                          // a soft ring that keeps expanding from the starting town
+  const r = waveTick % 6; if (r > 3 || !box) return;
+  ctx.save(); ctx.globalAlpha = 0.85*(1 - r/4); ctx.strokeStyle = '#fff070'; ctx.lineWidth = 1;
+  ctx.strokeRect(box.x0 - r - 1.5, box.y0 - r - 1.5, box.w + 2*r + 3, box.h + 2*r + 3); ctx.restore();
 }
 
 function drawMarker(t){
@@ -1206,46 +1334,22 @@ function bracket(b){
 
 function render(){
   if (!state.terrain){ drawPlaceholder(); return; }
-  drawTerrain();
-  if ($('showGrid').checked){
-    ctx.fillStyle = 'rgba(0,0,0,.15)';
-    for (let x = 1; x < MW; x++) ctx.fillRect(x*TILE, 0, 1, cv.height);
-    for (let y = 1; y < MH; y++) ctx.fillRect(0, y*TILE, cv.width, 1);
-  }
-  if ($('showRoads').checked){
-    ctx.fillStyle = 'rgba(70,40,20,.7)';
-    for (const k of state.roadEdges){
-      const a = Math.floor(k/1000), b = k % 1000;
-      const ax = (a % MW)*TILE + 4, ay = ((a/MW) | 0)*TILE + 4, bx = (b % MW)*TILE + 4, by = ((b/MW) | 0)*TILE + 4;
-      ctx.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx-ax) + 1, Math.abs(by-ay) + 1);
-    }
-  }
-  // routes: outline pass, then fill pass, so crossings merge cleanly
-  const blocks = [], segs = [];
-  routePaths().forEach((p, ri) => {
-    const sel = state.sel && state.sel.type === 'route' && state.sel.idx === ri;
-    p.squares.forEach((s, k) => {
-      const water = sqKind(s.x, s.y) === 'water';
-      blocks.push({ x:s.x*TILE+4, y:s.y*TILE+4, water, sel });
-      if (k){ const pr = p.squares[k-1];
-        segs.push({ ax:pr.x*TILE+4, ay:pr.y*TILE+4, bx:s.x*TILE+4, by:s.y*TILE+4, water:water && sqKind(pr.x, pr.y) === 'water', sel }); }
-    });
-  });
-  const segRect = (s, pad) => [Math.min(s.ax, s.bx)-pad, Math.min(s.ay, s.by)-pad, Math.abs(s.bx-s.ax)+pad*2, Math.abs(s.by-s.ay)+pad*2];
-  // Routes are painted solid on their own layer, then laid over the terrain at ROUTE_ALPHA in one go.
-  // (Blending each piece separately would make overlaps and corners darker.)
-  rctx.clearRect(0, 0, routeLayer.width, routeLayer.height);
-  const rpx = (x, y, w, h, c) => { rctx.fillStyle = c; rctx.fillRect(x, y, w, h); };
-  for (const s of segs){ const [x, y, w, h] = segRect(s, 3); rpx(x, y, w, h, s.water ? PAL.sOut : PAL.rOut); }
-  for (const b of blocks) rpx(b.x-3, b.y-3, 6, 6, b.water ? PAL.sOut : PAL.rOut);
-  for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, s.water ? PAL.sFill : PAL.rFill); }
-  for (const b of blocks.filter(b => !b.sel)) rpx(b.x-2, b.y-2, 4, 4, b.water ? PAL.sFill : PAL.rFill);
-  for (const s of segs.filter(s => s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, PAL.rSel); }
-  for (const b of blocks.filter(b => b.sel)) rpx(b.x-2, b.y-2, 4, 4, PAL.rSel);
+  const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.river), idOf(state.roadEdges),
+              $('showGrid').checked, $('showRoads').checked, $('showRivers').checked].join('|');
+  if (sk !== staticKey){ buildStatic(); staticKey = sk; }
+  const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
+  const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
+              state.sel && state.sel.type === 'route' ? state.sel.idx : -1].join('|');
+  if (rk !== routeKey){ buildRouteLayer(); routeKey = rk; }
+  ctx.drawImage(staticLayer, 0, 0);
+  drawWater();
   ctx.globalAlpha = ROUTE_ALPHA; ctx.drawImage(routeLayer, 0, 0); ctx.globalAlpha = 1;
+  drawAnts();
+  drawClouds();
   // markers
   const boxes = {};
   for (const kind of ['landmark', 'town', 'city']) state.towns.filter(t => t.kind === kind).forEach(t => boxes[t.id] = drawMarker(t));
+  drawStartPulse(boxes[state.startId]);
   const selId = state.linkFrom || (state.sel && state.sel.type === 'town' && state.sel.id);
   if (selId && boxes[selId]) bracket(boxes[selId]);
   if (state.sel && state.sel.type === 'cell') bracket({ x0:state.sel.x*TILE, y0:state.sel.y*TILE, w:8, h:8 });
@@ -1909,7 +2013,10 @@ function updatePopup(){
   if (!state.terrain){ pop.style.display = 'none'; return; }
   const e = buildLayout()[state.cursor.y][state.cursor.x];
   if (!e){ pop.style.display = 'none'; return; }
-  pop.innerHTML = `${esc(e.name)}${e.sub ? `<small>${esc(e.sub)}</small>` : ''}`;
+  const html = `${esc(e.name)}${e.sub ? `<small>${esc(e.sub)}</small>` : ''}`;
+  if (html !== pop.innerHTML || pop.style.display === 'none'){          // slide in when the place changes
+    pop.innerHTML = html; pop.classList.remove('enter'); void pop.offsetWidth; pop.classList.add('enter');
+  }
   // Stay out of the cursor's way: jump to the right when the cursor is in the top-left corner
   pop.classList.toggle('right', state.cursor.x < MW*0.55 && state.cursor.y < MH*0.5);
   pop.style.display = 'block';
