@@ -22,7 +22,9 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 - **Route names:** each route is named after the most distinctive real feature it passes, in priority order: roads ("I-15 Corridor"), rivers ("Jordan River Walk"), lakes ("Utah Lake Shore"), seas and bays ("Chesapeake Bay Coast"), then mountains ("Wasatch Range Pass"). Only if none apply does it fall back to terrain, using a real landform where possible ("Great Basin Flats"). A **Pokémon-style** toggle swaps in livelier versions ("I-15 Cycling Road", "Potomac Bridge"), and any route can be renamed by hand.
 - **Emerald-style cursor:** D-pad or arrow keys, with a pop-up showing the name of the square under the cursor.
 - **Editing:** move, add, delete and link towns; paint land, water and mountains; rename, resize and rotate cities.
-- **Export:** a 4× PNG, and JSON with a 28×15 `MAPSEC_*` layout, terrain sub-grid, towns and routes.
+- **Undo/redo:** every edit (moving, adding, deleting, linking, painting, renaming, sliders, re-route, even forging a new region) can be undone, 50 steps back. Buttons or Ctrl+Z / Ctrl+Y.
+- **Auto-save:** your current region is saved in this browser and comes back when you reopen the page.
+- **Export / import:** a 4× PNG, and JSON with a 28×15 `MAPSEC_*` layout, terrain sub-grid, towns and routes. The JSON also carries the full editor state, so **Import JSON** reopens it exactly where you left off (older exports import too, minus elevation and road data).
 
 ## Usage
 

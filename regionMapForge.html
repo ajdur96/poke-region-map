@@ -118,6 +118,13 @@
       bendy <output id="bendyOut" style="width:auto;font-size:8px">BALANCED</output>
     </div>
     <div class="actions">
+      <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶ UNDO</button>
+      <button id="redoBtn" title="Redo (Ctrl+Y or Ctrl+Shift+Z)" disabled>↷ REDO</button>
+      <button id="importBtn" title="Open a regionMap.json you exported">IMPORT JSON</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+      <span class="hint" id="saveState" style="margin:0;align-self:center"></span>
+    </div>
+    <div class="actions">
       <button id="rerouteBtn">RE-ROUTE</button>
       <button id="pngBtn">EXPORT PNG</button>
       <button id="jsonBtn">EXPORT JSON</button>
@@ -1210,11 +1217,12 @@ function drawNorth(){
 // ===== Info box =====
 function actionBtn(label, fn){
   const b = document.createElement('button'); b.textContent = label;
-  b.onclick = () => { fn(); renumber(); render(); showInfo(); };
+  b.onclick = () => { pushUndo(); fn(); renumber(); render(); showInfo(); };
   $('infoActions').appendChild(b);
 }
 const elevText = (x, y) => state.elev ? ` · ${Math.round(state.sqElev[y*MW+x])} m` : '';
 function showInfo(){
+  scheduleSave(); updateUndoButtons();
   const box = $('infoBox'); $('infoActions').innerHTML = '';
   updatePopup();
   $('toolHint').textContent = TOOL_HINTS[state.tool];
@@ -1295,7 +1303,7 @@ cv.addEventListener('pointerdown', e => {
   state.cursor = { x:c.x, y:c.y }; cursorOn = true;
   switch (state.tool){
     case 'inspect':
-      if (t){ state.sel = { type:'town', id:t.id }; dragging = t; moved = false; }
+      if (t){ state.sel = { type:'town', id:t.id }; dragging = t; moved = false; pushUndo(); }   // dropped again if it doesn't move
       else if (ri >= 0) state.sel = { type:'route', idx:ri };
       else state.sel = { type:'cell', x:c.x, y:c.y };
       break;
@@ -1304,6 +1312,7 @@ cv.addEventListener('pointerdown', e => {
       if (here){ state.sel = { type:'town', id:here.id }; break; }
       const name = prompt('Name your new town:', 'New Town');
       if (name === null) return;
+      pushUndo();
       const nt = { id:newId(), name:name.trim() || 'New Town', x:c.x, y:c.y, kind:'town', size:1, score:0 };
       const near = state.towns.filter(o => o.kind !== 'landmark').sort((a, b) => dist(a, nt) - dist(b, nt))[0];
       state.towns.push(nt);
@@ -1312,13 +1321,14 @@ cv.addEventListener('pointerdown', e => {
       break;
     }
     case 'delete':
-      if (t){ state.towns = state.towns.filter(o => o !== t); state.sel = null; }
-      else if (ri >= 0){ state.routes.splice(ri, 1); state.sel = null; }
+      if (t){ pushUndo(); state.towns = state.towns.filter(o => o !== t); state.sel = null; }
+      else if (ri >= 0){ pushUndo(); state.routes.splice(ri, 1); state.sel = null; }
       break;
     case 'link':
       if (!t){ state.linkFrom = null; break; }
       if (!state.linkFrom){ state.linkFrom = t.id; break; }
       if (state.linkFrom !== t.id){
+        pushUndo();
         const a = state.linkFrom, b = t.id;
         const i = state.routes.findIndex(r => (r.a === a && r.b === b) || (r.a === b && r.b === a));
         if (i >= 0) state.routes.splice(i, 1); else state.routes.push({ a, b });
@@ -1326,7 +1336,7 @@ cv.addEventListener('pointerdown', e => {
       state.linkFrom = null; state.sel = { type:'town', id:t.id };
       break;
     default:
-      painting = true; paint(c); return;
+      pushUndo(); painting = true; paint(c); return;
   }
   renumber(); render(); showInfo();
 });
@@ -1339,7 +1349,11 @@ cv.addEventListener('pointermove', e => {
     dragging.x = c.x; dragging.y = c.y; moved = true; state.cursor = { x:c.x, y:c.y }; render();
   } else if (painting) paint(c);
 });
-const endPointer = () => { if ((dragging && moved) || painting) showInfo(); dragging = null; painting = false; };
+const endPointer = () => {
+  if (dragging && !moved) dropLastUndo();          // a tap on a town isn't an edit
+  if ((dragging && moved) || painting) showInfo();
+  dragging = null; painting = false;
+};
 cv.addEventListener('pointerup', endPointer);
 cv.addEventListener('pointercancel', endPointer);
 
@@ -1350,7 +1364,11 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
 $('showGrid').onchange = render;
 $('showRoads').onchange = render;
 $('showRivers').onchange = render;
-$('flavorNames').onchange = () => { if (state.terrain){ nameRoutes(); render(); showInfo(); } };
+$('flavorNames').onchange = () => {
+  if (!state.terrain) return;
+  pushUndo({ flavor:!$('flavorNames').checked });  // record how it was before the click
+  nameRoutes(); render(); showInfo();
+};
 
 // ===== Forge! =====
 // ===== Loading bar =====
@@ -1399,6 +1417,7 @@ async function forge(){
   let ticker = null, quipTimer = null;
   try {
     const b = frameBounds();
+    if (state.terrain) pushUndo();                  // forging a new region can be undone too
     clearRegion();
     state.forging = true; prog.pct = 0; prog.stage = ''; prog.detail = '';
     quipTimer = setInterval(() => { prog.quip++; setProgress(prog.pct); }, 2500);
@@ -1469,15 +1488,170 @@ async function forge(){
   } finally { if (ticker) clearInterval(ticker); if (quipTimer) clearInterval(quipTimer); btn.disabled = false; }
 }
 $('forgeBtn').onclick = forge;
+let bendyBefore = 50, bendyArmed = false;          // one undo step per slider drag, not per pixel
+$('bendy').addEventListener('pointerdown', () => { bendyBefore = +$('bendy').value; });
+$('bendy').addEventListener('change', () => { bendyArmed = false; });
 $('bendy').oninput = () => {
   const v = +$('bendy').value;
-  $('bendyOut').textContent = v < 20 ? 'STRAIGHT' : v < 40 ? 'MOSTLY STRAIGHT' : v <= 60 ? 'BALANCED' : v <= 80 ? 'WINDING' : 'VERY BENDY';
+  if (state.terrain && !bendyArmed){ pushUndo({ bendy:bendyBefore }); bendyArmed = true; }
+  setBendyLabel();
   if (state.terrain && !state.forging){ pathCache.clear(); renumber(); render(); showInfo(); }
 };
 $('rerouteBtn').onclick = () => {
   if (!state.terrain) return;
+  pushUndo();
   state.routes = buildRoutes(+$('extraCount').value); snapLandmarks();
   state.sel = null; renumber(); render(); showInfo();
+};
+
+// ===== Snapshots: undo/redo, auto-save, import =====
+// An undo step copies only what edits can change (terrain, towns, routes, a few settings); the heavy
+// read-only data (elevation, roads, rivers, name maps) is shared by reference, so 50 steps cost little.
+const UNDO_LIMIT = 50, SAVE_KEY = 'regionMapForge.region.v1';
+let undoStack = [], redoStack = [];
+function takeSnap(over = {}){
+  return {
+    terrain:state.terrain.slice(), towns:structuredClone(state.towns), routes:structuredClone(state.routes),
+    startId:state.startId, nextId:state.nextId, seed:state.seed,
+    flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
+    shared:{ elev:state.elev, river:state.river, riverNames:state.riverNames, roadSq:state.roadSq, roadEdges:state.roadEdges,
+             roadEdgeName:state.roadEdgeName, names:state.names, gen:state.gen, notes:state.notes, timings:state.timings }
+  };
+}
+function applySnap(sn){
+  Object.assign(state, sn.shared);
+  Object.assign(state, { terrain:sn.terrain.slice(), towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
+    startId:sn.startId, nextId:sn.nextId, seed:sn.seed, sel:null, linkFrom:null });
+  $('flavorNames').checked = sn.flavor; $('bendy').value = sn.bendy; setBendyLabel();
+  derive();                                          // rebuilds lakes + square summaries, clears the path cache
+  renumber();
+  const st = townById(state.startId); if (st) state.cursor = { x:st.x, y:st.y };
+  render(); showInfo();
+}
+function pushUndo(over){
+  if (!state.terrain) return;
+  undoStack.push(takeSnap(over)); if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack = []; updateUndoButtons();
+}
+function dropLastUndo(){ undoStack.pop(); updateUndoButtons(); }
+function undo(){ if (!undoStack.length || state.forging) return; redoStack.push(takeSnap()); applySnap(undoStack.pop()); }
+function redo(){ if (!redoStack.length || state.forging) return; undoStack.push(takeSnap()); applySnap(redoStack.pop()); }
+function updateUndoButtons(){ $('undoBtn').disabled = !undoStack.length; $('redoBtn').disabled = !redoStack.length; }
+$('undoBtn').onclick = undo;
+$('redoBtn').onclick = redo;
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)){ e.preventDefault(); redo(); }
+});
+function setBendyLabel(){
+  const v = +$('bendy').value;
+  $('bendyOut').textContent = v < 20 ? 'STRAIGHT' : v < 40 ? 'MOSTLY STRAIGHT' : v <= 60 ? 'BALANCED' : v <= 80 ? 'WINDING' : 'VERY BENDY';
+}
+
+// --- Full region ⇄ plain JSON (typed arrays as base64, Maps/Sets as arrays) ---
+const toB64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+const f32ToB64 = f => toB64(new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
+const b64ToF32 = str => new Float32Array(fromB64(str).buffer);
+function serialize(){
+  const g = state.gen, c = g.b.corners, ll = p => ({ lat:p.lat, lng:p.lng }), n = state.names;
+  return {
+    format:'regionMapForge-editor/1', savedAt:new Date().toISOString(),
+    terrain:toB64(state.terrain), elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
+    riverNames:[...state.riverNames], roadSq:f32ToB64(state.roadSq), roadEdges:[...state.roadEdges], roadEdgeName:[...(state.roadEdgeName || [])],
+    names:n ? { lake:[...n.lake], sea:[...n.sea], range:[...n.range], land:[...n.land].map(([k, v]) => [k, { name:v.name, kind:v.kind }]), peaks:n.peaks } : null,
+    gen:{ z:g.z, o:g.o, ex:g.ex, ey:g.ey, det:g.det, b:{ ...g.b, corners:{ tl:ll(c.tl), tr:ll(c.tr), bl:ll(c.bl), br:ll(c.br) } } },
+    towns:state.towns, routes:state.routes.map(r => ({ a:r.a, b:r.b, name:r.name, custom:!!r.custom })),
+    startId:state.startId, nextId:state.nextId, seed:state.seed, notes:state.notes,
+    ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value,
+         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked }
+  };
+}
+function deserialize(o){
+  const n = o.names;
+  return {
+    terrain:fromB64(o.terrain), towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0,
+    flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
+    shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
+      roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(MW*MH), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []),
+      names:n ? { lake:new Map(n.lake), sea:new Map(n.sea), range:new Map(n.range), land:new Map(n.land), peaks:n.peaks } : null,
+      gen:o.gen, notes:o.notes || [], timings:{} }
+  };
+}
+
+// Older exports (before editor state was included): rebuild what we can from the readable fields
+function fromLegacyExport(o){
+  if (!o.terrainSubGrid?.rows || !o.towns) throw new Error('not a Region Map Forge export');
+  const rows = o.terrainSubGrid.rows, terrain = new Uint8Array(SW*SH), river = new Uint8Array(SW*SH);
+  const code = { '~':T.SEA, 'o':T.SEA, '.':T.LAND, 'r':T.LAND, 'h':T.HILL, '^':T.MTN, 'A':T.PEAK };
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
+    const ch = rows[y]?.[x] ?? '.'; terrain[y*SW + x] = code[ch] ?? T.LAND; if (ch === 'r') river[y*SW + x] = 1;
+  }
+  const b = o.sourceBounds || {};
+  const corners = b.corners || { tl:{ lat:b.n, lng:b.w }, tr:{ lat:b.n, lng:b.e }, bl:{ lat:b.s, lng:b.w }, br:{ lat:b.s, lng:b.e } };
+  const gen = makeGen({ ...b, corners, rot:b.rot || 0 }, 12);
+  const towns = o.towns.map(t => {
+    const sq = t.squares || [{ x:t.x, y:t.y }];
+    return { id:t.id, name:t.name, kind:t.kind, x:sq[0].x, y:sq[0].y, size:sq.length > 1 ? 2 : 1,
+             dir:sq.length > 1 && sq[1].x === sq[0].x ? 'v' : 'h', score:t.start ? -1 : 0 };
+  });
+  const start = o.towns.find(t => t.start);
+  return {
+    terrain, towns, routes:(o.routes || []).map(r => ({ a:r.from, b:r.to, name:r.name, custom:!!r.customName })),
+    startId:start ? start.id : null, nextId:Math.max(0, ...towns.map(t => t.id)) + 1, seed:0, flavor:false, bendy:50,
+    shared:{ elev:null, river, riverNames:new Map(), roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(),
+             names:null, gen, notes:['Imported from an older export: elevation, roads and feature names weren\'t saved in it.'], timings:{} }
+  };
+}
+
+// Point the live map + frame at a restored region, so FORGE / overlay line up with it again
+function viewRegion(gen){
+  const c = gen.b.corners; if (!c) return;
+  const lat = (c.tl.lat + c.br.lat)/2, lng = (c.tl.lng + c.br.lng)/2;
+  rot = gen.b.rot || 0; $('rotOut').textContent = rot + '°'; placeFrame();
+  map.setView([lat, lng], map.getZoom(), { animate:false });
+  if (gen.b.kmPerSquare) setKps(gen.b.kmPerSquare);
+}
+
+function loadRegion(o, howLabel){
+  const sn = o.format === 'regionMapForge-editor/1' ? deserialize(o) : o.editorState ? deserialize(o.editorState) : fromLegacyExport(o);
+  if (state.terrain) pushUndo();
+  applySnap(sn);
+  const ui = (o.editorState || o).ui;
+  if (ui){ $('townCount').value = ui.townCount; $('townOut').textContent = ui.townCount;
+           $('extraCount').value = ui.extraCount; $('extraOut').textContent = ui.extraCount; $('landmarks').checked = ui.landmarks; }
+  viewRegion(state.gen);
+  setStatus(howLabel);
+}
+
+// Auto-save to this browser (debounced). Storage can be missing or full; the app works without it.
+let saveTimer = null;
+function scheduleSave(){
+  if (!state.terrain || state.forging) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(serialize())); $('saveState').textContent = 'Auto-saved ✓'; }
+    catch (e) { $('saveState').textContent = 'Auto-save unavailable'; }
+  }, 600);
+}
+function restoreSaved(){
+  let raw = null; try { raw = localStorage.getItem(SAVE_KEY); } catch (e) {}
+  if (!raw) return;
+  try {
+    const o = JSON.parse(raw);
+    loadRegion(o, `Restored your last region (saved ${new Date(o.savedAt).toLocaleString()}).`);
+    undoStack = []; redoStack = []; updateUndoButtons();
+  } catch (e) { setStatus('Couldn\'t restore the saved region.'); }
+}
+
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async () => {
+  const f = $('importFile').files[0]; if (!f) return;
+  try { loadRegion(JSON.parse(await f.text()), `Imported ${f.name}.`); $('townMapCard').scrollIntoView({ behavior:'smooth' }); }
+  catch (e) { setStatus('Import failed: ' + e.message); }
+  $('importFile').value = '';
 };
 
 // ===== Search =====
@@ -1596,6 +1770,7 @@ $('jsonBtn').onclick = () => {
       squares:paths[i].squares.length, corners:corners(paths[i].squares),
       roadFollowPct:Math.round(paths[i].roadFrac*100), seaRoute:paths[i].waterFrac > 0.5 }))
   };
+  out.editorState = serialize();                   // lets IMPORT JSON restore the region exactly
   download('regionMap.json', new Blob([JSON.stringify(out, null, 2)], { type:'application/json' }));
 };
 
@@ -1604,6 +1779,7 @@ $('townCount').oninput = e => $('townOut').textContent = e.target.value;
 $('extraCount').oninput = e => $('extraOut').textContent = e.target.value;
 document.fonts && document.fonts.ready.then(() => { if (!state.terrain) render(); });
 render(); showInfo();
+restoreSaved();
 </script>
 </body>
 </html>
