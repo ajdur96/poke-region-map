@@ -61,6 +61,9 @@
     box-shadow:inset 0 -3px 0 #c8d0e0, 0 2px 0 #0006;padding:7px 9px 8px;font-size:9px;line-height:1.3;text-transform:uppercase}
   .popup.right{left:auto;right:14px}
   .popup.enter{animation:popIn .18s ease-out}
+  body[data-theme=night] .titlebar{background:linear-gradient(#283058,#141a38)}
+  body[data-theme=poketch] .titlebar{background:linear-gradient(#5a8a48,#2e5a30)}
+  body[data-theme=sepia] .titlebar{background:linear-gradient(#8a6a44,#5a4026)}
   @keyframes popIn{from{transform:translateY(-6px);opacity:0}to{transform:none;opacity:1}}
   @media (prefers-reduced-motion: reduce){.popup.enter{animation:none}}
   .popup small{display:block;font-size:7px;color:#6878a0;margin-top:5px}
@@ -125,6 +128,10 @@
       <label><input type="checkbox" id="showRoads"> Real roads</label>
       <label><input type="checkbox" id="showRivers" checked> Rivers</label>
       <label><input type="checkbox" id="showClouds" checked> Clouds</label>
+      <label>Theme <select id="theme" style="font-size:13px;padding:3px;border-radius:5px">
+        <option value="day">Day</option><option value="night">Night</option><option value="live">Live (real sunlight)</option>
+        <option value="poketch">Pokétch</option><option value="sepia">Sepia</option></select></label>
+      <span class="hint" id="themeInfo" style="margin:0"></span>
       <label><input type="checkbox" id="flavorNames"> Pokémon-style route names</label>
     </div>
     <div class="textbox pixel" id="infoBox"></div>
@@ -1101,7 +1108,7 @@ function snapLandmarks(){
 }
 
 // ===== Rendering =====
-const cv = $('region'), ctx = cv.getContext('2d');
+const cv = $('region'), ctx = cv.getContext('2d', { willReadFrequently:true });   // themes read each frame back
 const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
 const ROUTE_ALPHA = 0.75;                                  // 1 = solid, lower = more terrain shows through
 const routeLayer = document.createElement('canvas'); routeLayer.width = cv.width; routeLayer.height = cv.height;
@@ -1333,7 +1340,7 @@ function bracket(b){
 }
 
 function render(){
-  if (!state.terrain){ drawPlaceholder(); return; }
+  if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
   const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.river), idOf(state.roadEdges),
               $('showGrid').checked, $('showRoads').checked, $('showRivers').checked].join('|');
   if (sk !== staticKey){ buildStatic(); staticKey = sk; }
@@ -1341,20 +1348,40 @@ function render(){
   const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
               state.sel && state.sel.type === 'route' ? state.sel.idx : -1].join('|');
   if (rk !== routeKey){ buildRouteLayer(); routeKey = rk; }
-  ctx.drawImage(staticLayer, 0, 0);
-  drawWater();
-  ctx.globalAlpha = ROUTE_ALPHA; ctx.drawImage(routeLayer, 0, 0); ctx.globalAlpha = 1;
-  drawAnts();
+  const rv = revealNow();                              // null when no reveal is playing
+  if (rv && rv.terrainX != null){                     // terrain sweeping in from the left, with a bright scan line
+    px(0, 0, cv.width, cv.height, PAL.deep);
+    if (rv.terrainX > 0) ctx.drawImage(staticLayer, 0, 0, rv.terrainX, cv.height, 0, 0, rv.terrainX, cv.height);
+    px(rv.terrainX, 0, 2, cv.height, 'rgba(255,255,255,.7)');
+  } else { ctx.drawImage(staticLayer, 0, 0); drawWater(); }
+  ctx.globalAlpha = ROUTE_ALPHA;
+  if (rv && rv.routeD != null){                       // routes growing outward from the starting town
+    ctx.save(); ctx.beginPath();
+    for (const [k, d] of rv.dist) if (d <= rv.routeD) ctx.rect((k % MW)*TILE, ((k/MW) | 0)*TILE, TILE, TILE);
+    ctx.clip(); ctx.drawImage(routeLayer, 0, 0); ctx.restore();
+  } else if (!rv) ctx.drawImage(routeLayer, 0, 0);
+  ctx.globalAlpha = 1;
+  if (!rv) drawAnts();
   drawClouds();
   // markers
   const boxes = {};
-  for (const kind of ['landmark', 'town', 'city']) state.towns.filter(t => t.kind === kind).forEach(t => boxes[t.id] = drawMarker(t));
+  for (const kind of ['landmark', 'town', 'city']) state.towns.filter(t => t.kind === kind).forEach(t => {
+    if (rv){                                          // during a reveal, towns pop in as the routes reach them
+      if (rv.routeD == null) return;
+      const d = rv.townD.get(t.id) ?? rv.maxD + 1;
+      if (d > rv.routeD) return;
+      if (rv.routeD - d < 0.8){ const b = drawMarker(t); px(b.x0, b.y0, b.w, b.h, 'rgba(255,255,255,.75)'); return; }   // pop flash
+    }
+    boxes[t.id] = drawMarker(t);
+  });
+  if (rv){ drawNorth(); applyTheme(); updateOverlay(); return; }
   drawStartPulse(boxes[state.startId]);
   const selId = state.linkFrom || (state.sel && state.sel.type === 'town' && state.sel.id);
   if (selId && boxes[selId]) bracket(boxes[selId]);
   if (state.sel && state.sel.type === 'cell') bracket({ x0:state.sel.x*TILE, y0:state.sel.y*TILE, w:8, h:8 });
   drawNorth();
   drawCursor();
+  applyTheme();
   updateOverlay();
 }
 // Small north arrow in the corner whenever the frame was rotated
@@ -1456,6 +1483,7 @@ function paint(c){
 
 cv.addEventListener('pointerdown', e => {
   if (!state.terrain || state.forging) return;
+  if (skipReveal()) return;                          // a tap during the reveal just finishes it
   cv.setPointerCapture(e.pointerId);
   const c = cellFromEvent(e), t = townAt(c), ri = t ? -1 : routeAt(c);
   state.cursor = { x:c.x, y:c.y }; cursorOn = true;
@@ -1596,7 +1624,7 @@ async function forge(opts = {}){
     const app = stat ? staticToApp(stat, b) : null;
     if (!osm.data) state.notes.push(app ? 'Map tiles unreadable — lakes from bundled data.' : 'Couldn\'t read water from map tiles.');
     buildTerrain(osm, dem, app ? app.lakes : []);
-    render();                                      // show the new terrain while towns load
+    render(); startReveal('terrain');              // show the new terrain (sweeping in) while towns load
 
     // Roads and rivers come straight from the bundled data: no waiting on Overpass.
     let places = [], landmarks = [];
@@ -1640,6 +1668,7 @@ async function forge(opts = {}){
     clearInterval(quipTimer); quipTimer = null;
     setProgress(100, 'done', '');
     state.forging = false;
+    startReveal('routes');
     render(); showInfo();
     setTimeout(endProgress, 500);
     setStatus(`Forged ${state.towns.filter(t => t.kind !== 'landmark').length} towns and ${state.routes.length} routes.`);
@@ -1686,9 +1715,115 @@ $('rerollBtn').onclick = () => {
   if (!locked.some(t => t.id === state.startId)) state.startId = null;
   state.sel = null; renumber();
   const st = townById(state.startId); if (st) state.cursor = { x:st.x, y:st.y };
-  render(); showInfo();
+  startReveal('routes'); render(); showInfo();
   setStatus(`Layout #${state.variant}${locked.length ? ` · kept ${locked.length} locked` : ''}.`);
 };
+
+// ===== Palette themes =====
+// Every finished frame is passed through a colour lookup table, so each theme recolours everything
+// (terrain, routes, markers, clouds, blends) consistently. Results are cached per colour, so it's cheap.
+const clamp8 = v => v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
+const luma = (r, g, b) => 0.299*r + 0.587*g + 0.114*b;
+const T_NIGHT = (r, g, b) => {
+  const glow = (r > 180 && g < 130) || (r > 200 && g > 180 && b < 140) || luma(r, g, b) > 235;   // markers, lights, foam
+  if (glow) return [r*.85, g*.8, b*.9 + 10];
+  if (r > 200 && g > 130 && b < 130) return [r*.72, g*.58, b*.55 + 22];             // routes stay warm, like lamplit roads
+  return [r*.32 + 8, g*.40 + 14, b*.62 + 40];
+};
+const T_GOLDEN = (r, g, b) => [r*1.06 + 10, g*.92 + 4, b*.75];
+const T_TWILIGHT = (r, g, b) => [r*.6 + 30, g*.5 + 10, b*.7 + 45];
+const POKETCH = [[24, 48, 32], [58, 106, 56], [120, 168, 96], [192, 224, 160]];
+// 4 greens only, so brightness alone would merge towns with the sea and routes with land: pick shades by role
+const T_POKETCH = (r, g, b) => {
+  if (r > 180 && g < 120 && b < 120) return POKETCH[0];                               // red town markers: darkest
+  if (r > 200 && g > 140 && b < 130) return POKETCH[3];                               // routes (orange/yellow): lightest
+  if (b > r + 20 && b > g - 10) return POKETCH[luma(r, g, b) < 170 ? 1 : 2];          // water + blue landmarks
+  const L = luma(r, g, b); return POKETCH[L < 60 ? 0 : L < 110 ? 1 : L < 205 ? 2 : 3];
+};
+const T_SEPIA = (r, g, b) => {
+  const s = [r*.393 + g*.769 + b*.189, r*.349 + g*.686 + b*.168, r*.272 + g*.534 + b*.131];
+  return [s[0]*.7 + r*.15 + 244*.15, s[1]*.7 + g*.15 + 228*.15, s[2]*.7 + b*.15 + 196*.15];   // keep a hint of colour + old paper
+};
+const mixT = (f, g, u) => (r, gg, b) => { const a = f ? f(r, gg, b) : [r, gg, b], c = g(r, gg, b); return a.map((v, i) => v + (c[i] - v)*u); };
+
+// Sun altitude (degrees) at a place and time: compact version of the standard NOAA/astronomical formulas
+function sunAltitude(lat, lng, date = new Date()){
+  const rad = Math.PI/180, d = date.getTime()/86400000 + 2440587.5 - 2451545.0;   // days since J2000.0
+  const g = (357.529 + 0.98560028*d)*rad, q = 280.459 + 0.98564736*d;
+  const L = (q + 1.915*Math.sin(g) + 0.020*Math.sin(2*g))*rad, e = (23.439 - 0.00000036*d)*rad;
+  const ra = Math.atan2(Math.cos(e)*Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e)*Math.sin(L));
+  const gmst = ((18.697374558 + 24.06570982441908*d) % 24 + 24) % 24, ha = (gmst*15 + lng)*rad - ra;
+  return Math.asin(Math.sin(lat*rad)*Math.sin(dec) + Math.cos(lat*rad)*Math.cos(dec)*Math.cos(ha))/rad;
+}
+function liveTheme(){
+  const c = state.gen?.b.center || map.getCenter(), a = sunAltitude(c.lat, c.lng);
+  let fn, label;
+  if (a >= 12){ fn = null; label = 'day'; }
+  else if (a >= 0){ fn = mixT(null, T_GOLDEN, (12 - a)/12); label = 'golden hour'; }
+  else if (a >= -6){ fn = mixT(T_GOLDEN, T_TWILIGHT, -a/6); label = 'sunset / dusk'; }
+  else if (a >= -12){ fn = mixT(T_TWILIGHT, T_NIGHT, (-6 - a)/6); label = 'twilight'; }
+  else { fn = T_NIGHT; label = 'night'; }
+  return { fn, key:'live' + Math.round(a*2), info:`☀ sun ${a >= 0 ? a.toFixed(0) + '° up' : (-a).toFixed(0) + '° below the horizon'}: ${label}` };
+}
+let themeLut = new Map(), themeLutKey = '', themeNow = { fn:null, key:'day', info:'' };
+function refreshTheme(){
+  const v = $('theme').value;
+  themeNow = v === 'live' ? liveTheme() : { fn:{ night:T_NIGHT, poketch:T_POKETCH, sepia:T_SEPIA }[v] || null, key:v, info:'' };
+  $('themeInfo').textContent = themeNow.info;
+  document.body.dataset.theme = v === 'live' ? (themeNow.info.includes('night') ? 'night' : 'day') : v;
+}
+function applyTheme(){
+  const fn = themeNow.fn; if (!fn) return;
+  if (themeLutKey !== themeNow.key){ themeLut = new Map(); themeLutKey = themeNow.key; }
+  const img = ctx.getImageData(0, 0, cv.width, cv.height), d = img.data;
+  for (let i = 0; i < d.length; i += 4){
+    const k = (d[i] << 16) | (d[i+1] << 8) | d[i+2];
+    let v = themeLut.get(k);
+    if (v === undefined){ const [r, g, b] = fn(d[i], d[i+1], d[i+2]); v = (clamp8(r) << 16) | (clamp8(g) << 8) | clamp8(b); themeLut.set(k, v); }
+    d[i] = v >> 16; d[i+1] = (v >> 8) & 255; d[i+2] = v & 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+$('theme').onchange = () => { refreshTheme(); render(); scheduleSave(); };
+setInterval(() => { if ($('theme').value === 'live'){ refreshTheme(); render(); } }, 60000);   // the sun moves
+
+// ===== Map reveal =====
+// After forging: the terrain sweeps in as soon as it's ready; once towns and routes are done, routes grow
+// outward from the starting town (by travel distance along the routes) and towns pop in as they're reached.
+// Tap the map to skip. Skipped entirely for reduced motion.
+let reveal = null;
+function startReveal(phase){
+  if (reduceMotion || !state.terrain){ reveal = null; return; }
+  const now = performance.now();
+  if (phase === 'terrain'){ reveal = { phase, t0:now, dur:700 }; }
+  else {
+    const t0 = reveal && reveal.phase === 'terrain' ? Math.max(now, reveal.t0 + reveal.dur) : now;   // let the sweep finish
+    const paths = routePaths(), adj = new Map(), key = s => s.y*MW + s.x, link = (a, b) => { (adj.get(a) || adj.set(a, []).get(a)).push(b); };
+    for (const p of paths) for (let k = 1; k < p.squares.length; k++){ const a = key(p.squares[k-1]), b = key(p.squares[k]); link(a, b); link(b, a); }
+    const st = townById(state.startId), dist = new Map();
+    const q = st ? footprint(st).map(key) : paths.length ? [key(paths[0].squares[0])] : [];
+    q.forEach(k => dist.set(k, 0));
+    for (let h = 0; h < q.length; h++) for (const n of adj.get(q[h]) || []) if (!dist.has(n)){ dist.set(n, dist.get(q[h]) + 1); q.push(n); }
+    const maxD = Math.max(0, ...dist.values()), townD = new Map();
+    for (const t of state.towns){ const ds = footprint(t).map(f => dist.get(key(f))).filter(v => v != null); townD.set(t.id, ds.length ? Math.min(...ds) : maxD + 1); }
+    reveal = { phase, t0, dur:Math.min(2600, 900 + maxD*45), dist, townD, maxD };
+  }
+  const step = () => {
+    if (!reveal) return;
+    render();
+    if (performance.now() < reveal.t0 + reveal.dur) requestAnimationFrame(step);
+    else if (reveal.phase === 'routes'){ reveal = null; render(); showInfo(); }
+  };
+  requestAnimationFrame(step);
+}
+function revealNow(){
+  if (!reveal) return null;
+  const u = Math.max(0, Math.min(1, (performance.now() - reveal.t0)/reveal.dur));
+  if (reveal.phase === 'terrain') return u >= 1 ? null : { terrainX:Math.round(u*cv.width), routeD:null };
+  const ease = 1 - Math.pow(1 - u, 2);
+  return { terrainX:null, routeD:ease*(reveal.maxD + 1.5), dist:reveal.dist, townD:reveal.townD, maxD:reveal.maxD };
+}
+function skipReveal(){ if (!reveal) return false; reveal = null; render(); showInfo(); return true; }
 
 // ===== Region title bar =====
 // Suggests a one-word-ish name from the region's most prominent named feature: a mountain range,
@@ -1787,7 +1922,7 @@ function shareUrl(){
   const b = state.gen.b, c = b.corners, ctr = b.center || { lat:(c.tl.lat + c.br.lat)/2, lng:(c.tl.lng + c.br.lng)/2 };
   const q = new URLSearchParams({ lat:ctr.lat.toFixed(6), lng:ctr.lng.toFixed(6), kps:String(+b.kmPerSquare), rot:String(b.rot || 0),
     seed:String(state.seed), layout:String(state.variant || 0), towns:$('townCount').value, extra:$('extraCount').value,
-    lm:$('landmarks').checked ? '1' : '0', bendy:$('bendy').value, style:$('flavorNames').checked ? '1' : '0' });
+    lm:$('landmarks').checked ? '1' : '0', bendy:$('bendy').value, style:$('flavorNames').checked ? '1' : '0', theme:$('theme').value });
   if (state.regionNameCustom) q.set('name', state.regionName);
   return location.href.split('#')[0] + '#' + q.toString();
 }
@@ -1809,6 +1944,7 @@ function openShareLink(){
   if (q.has('lm')) $('landmarks').checked = q.get('lm') === '1';
   if (q.has('bendy')){ $('bendy').value = q.get('bendy'); setBendyLabel(); }
   if (q.has('style')) $('flavorNames').checked = q.get('style') === '1';
+  if (q.has('theme') && [...$('theme').options].some(o => o.value === q.get('theme'))){ $('theme').value = q.get('theme'); refreshTheme(); }
   rot = ((num('rot', 0) % 360) + 360) % 360; $('rotOut').textContent = rot + '°'; placeFrame();
   map.setView([num('lat', 0), num('lng', 0)], map.getZoom(), { animate:false });
   setKps(num('kps', 5));
@@ -1884,7 +2020,7 @@ function serialize(){
     regionName:state.regionName, regionNameCustom:!!state.regionNameCustom,
     source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '']),
                             landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '']) } : null,
-    ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value,
+    ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value, theme:$('theme').value,
          extraCount:+$('extraCount').value, landmarks:$('landmarks').checked }
   };
 }
@@ -1942,6 +2078,7 @@ function loadRegion(o, howLabel){
   if (state.terrain) pushUndo();
   applySnap(sn);
   const ui = (o.editorState || o).ui;
+  if (ui?.theme){ $('theme').value = ui.theme; refreshTheme(); }
   if (ui){ $('townCount').value = ui.townCount; $('townOut').textContent = ui.townCount;
            $('extraCount').value = ui.extraCount; $('extraOut').textContent = ui.extraCount; $('landmarks').checked = ui.landmarks; }
   viewRegion(state.gen);
@@ -2010,7 +2147,7 @@ function buildLayout(){
 }
 function updatePopup(){
   const pop = $('popup');
-  if (!state.terrain){ pop.style.display = 'none'; return; }
+  if (!state.terrain || reveal){ pop.style.display = 'none'; return; }
   const e = buildLayout()[state.cursor.y][state.cursor.x];
   if (!e){ pop.style.display = 'none'; return; }
   const html = `${esc(e.name)}${e.sub ? `<small>${esc(e.sub)}</small>` : ''}`;
