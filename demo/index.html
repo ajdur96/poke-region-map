@@ -1130,6 +1130,27 @@ function nameRoutes(){
   }
 }
 
+// Every landmark gets a route. Whatever isn't already on a route square gets a short spur route from the
+// nearest town (closest landmarks first, re-checking after each spur, since one spur can pass another).
+function connectLandmarks(){
+  const towns = state.towns.filter(t => t.kind !== 'landmark'); if (!towns.length) return;
+  const covered = () => new Set(routePaths().flatMap(p => p.squares.map(s => s.y*MW + s.x)));
+  const nearest = l => towns.reduce((a, t) => dist(t, l) < dist(a, l) ? t : a);
+  const lms = state.towns.filter(t => t.kind === 'landmark').sort((a, b) => dist(nearest(a), a) - dist(nearest(b), b));
+  let on = covered();
+  for (const l of lms){
+    if (on.has(l.y*MW + l.x)) continue;
+    state.routes.push({ a:nearest(l).id, b:l.id });
+    on = covered();
+  }
+}
+// The whole route-laying sequence: town network, landmarks nudged onto nearby routes, spurs to the rest
+function layRoutes(){
+  state.routes = buildRoutes(+$('extraCount').value);
+  snapLandmarks();
+  connectLandmarks();
+}
+
 function snapLandmarks(){
   const cells = routePaths().flatMap(p => p.squares).filter(c => inner(c.x, c.y));
   for (const t of state.towns.filter(t => t.kind === 'landmark' && !t.fixed && !t.locked)){
@@ -1661,8 +1682,7 @@ async function forge(opts = {}){
     computeNameMaps(app && app.named, landmarks);
     state.source = { places, landmarks }; state.variant = opts.variant || 0;     // kept so REROLL needs no new downloads
     state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks, { variant:state.variant });
-    state.routes = buildRoutes(+$('extraCount').value);
-    snapLandmarks();
+    layRoutes();
     renumber();
     if (opts.regionName){ state.regionName = opts.regionName; state.regionNameCustom = true; } else suggestRegionName();
     const st = townById(state.startId); state.cursor = st ? { x:st.x, y:st.y } : { x:0, y:0 };
@@ -1693,13 +1713,13 @@ $('bendy').oninput = () => {
 const pairKey = (a, b) => a < b ? a + '-' + b : b + '-' + a;
 function rebuildRoutesKeepingNames(){
   const custom = new Map(state.routes.filter(r => r.custom).map(r => [pairKey(r.a, r.b), r.name]));
-  state.routes = buildRoutes(+$('extraCount').value);
+  layRoutes();
   for (const r of state.routes){ const nm = custom.get(pairKey(r.a, r.b)); if (nm){ r.name = nm; r.custom = true; } }
 }
 $('rerouteBtn').onclick = () => {
   if (!state.terrain) return;
   pushUndo();
-  rebuildRoutesKeepingNames(); snapLandmarks();
+  rebuildRoutesKeepingNames();
   state.sel = null; renumber(); render(); showInfo();
 };
 // Same area, different towns and landmarks. Locked towns stay; uses the current Towns / Extra routes / landmark settings.
@@ -1712,7 +1732,7 @@ $('rerollBtn').onclick = () => {
   state.notes = state.notes.filter(n => !n.startsWith('Only '));
   state.towns = pickTowns(state.source.places, +$('townCount').value, $('landmarks').checked, state.source.landmarks,
                           { variant:state.variant, locked });
-  rebuildRoutesKeepingNames(); snapLandmarks();
+  rebuildRoutesKeepingNames();
   if (!locked.some(t => t.id === state.startId)) state.startId = null;
   state.sel = null; renumber();
   const st = townById(state.startId); if (st) state.cursor = { x:st.x, y:st.y };
@@ -2546,8 +2566,7 @@ function demoForge(){
   demoRoads(rng, places);
   state.source = { places, landmarks };
   state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks, { variant:0 });
-  state.routes = buildRoutes(+$('extraCount').value);
-  snapLandmarks(); renumber(); suggestRegionName();
+  layRoutes(); renumber(); suggestRegionName();
   const st = townById(state.startId); state.cursor = st ? { x:st.x, y:st.y } : { x:0, y:0 };
   startReveal('terrain'); startReveal('routes');
   refreshTheme(); render(); showInfo();

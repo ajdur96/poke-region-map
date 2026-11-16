@@ -264,8 +264,7 @@ function demoForge(){
   demoRoads(rng, places);
   state.source = { places, landmarks };
   state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks, { variant:0 });
-  state.routes = buildRoutes(+$('extraCount').value);
-  snapLandmarks(); renumber(); suggestRegionName();
+  layRoutes(); renumber(); suggestRegionName();
   const st = townById(state.startId); state.cursor = st ? { x:st.x, y:st.y } : { x:0, y:0 };
   startReveal('terrain'); startReveal('routes');
   refreshTheme(); render(); showInfo();
