@@ -537,7 +537,8 @@ function pickTowns(places, count, wantLandmarks, landmarks = []){
       .filter(l => inSq(l.x, l.y) && !towns.some(t => t.name === l.name)).sort((a, b) => b.score - a.score);
     for (const l of lms){
       if (isLm() >= nLm) break;
-      if (towns.every(o => footprint(o).every(f => cheb(f, l) >= (o.kind === 'landmark' ? 3 : 2))))
+      // notable landmarks may sit right next to a town (just not on it); keep landmarks 3 apart from each other
+      if (towns.every(o => footprint(o).every(f => cheb(f, l) >= (o.kind === 'landmark' ? 3 : 1))))
         towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural });
     }
     // 2) then leftover settlements
