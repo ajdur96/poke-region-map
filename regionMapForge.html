@@ -24,6 +24,7 @@
   #frame{position:absolute;border:3px dashed var(--accent);box-shadow:0 0 0 9999px rgba(10,16,40,.35);pointer-events:none;z-index:500}
   #frame span{position:absolute;top:-3px;left:-3px;background:var(--accent);color:#000;font-size:8px;padding:3px 5px}
   .search{display:flex;gap:6px;margin-bottom:8px}
+  input[type=number]{width:96px;padding:7px;border-radius:6px;border:2px solid var(--edge);background:#141a30;color:#fff;font-size:15px}
   input[type=text]{flex:1;min-width:0;padding:8px;border-radius:6px;border:2px solid var(--edge);background:#141a30;color:#fff;font-size:15px}
   button{font-family:'Press Start 2P',monospace;font-size:9px;padding:9px 10px;border-radius:6px;border:2px solid #000;background:#e8ecf8;color:var(--ink);box-shadow:0 3px 0 #000;cursor:pointer}
   button:active{transform:translateY(2px);box-shadow:0 1px 0 #000}
@@ -68,6 +69,17 @@
       <button id="searchBtn">GO</button>
     </div>
     <div id="mapWrap"><div id="map"></div><div id="frame"><span class="pixel">28×15</span></div></div>
+    <div class="row">Rotate
+      <button id="rotL" title="Rotate frame 15° counter-clockwise">⟲ 15°</button>
+      <output id="rotOut" class="pixel" style="width:44px;text-align:center">0°</output>
+      <button id="rotR" title="Rotate frame 15° clockwise">15° ⟳</button>
+      <button id="rotReset" title="Point the frame north again">N↑</button>
+    </div>
+    <div class="row">km per square
+      <input type="number" id="kmSq" min="0.112" max="44.8" step="0.01" inputmode="decimal">
+      <button id="kmSet">SET</button>
+    </div>
+    <div class="hint" id="scaleInfo" style="margin-top:0"></div>
     <div class="row">Towns <input type="range" id="townCount" min="3" max="16" value="10"><output id="townOut">10</output></div>
     <div class="row">Extra routes <input type="range" id="extraCount" min="0" max="6" value="2"><output id="extraOut">2</output></div>
     <div class="row"><label><input type="checkbox" id="landmarks" checked> Blue landmarks along routes</label></div>
@@ -143,22 +155,75 @@ const state = { terrain:null, elev:null, lake:null, sq:null, sqElev:null,
   roadSq:new Float32Array(MW*MH), roadEdges:new Set(), river:null, riverNames:new Map(), gen:null, towns:[], routes:[],
   startId:null, sel:null, cursor:{x:0, y:0}, tool:'inspect', linkFrom:null, nextId:1, seed:0, ver:0, notes:[] };
 
-// ===== Leaflet map + 28:15 frame =====
-const map = L.map('map').setView([40.6, -111.8], 8);
+// ===== Leaflet map + rotatable 28:15 frame + exact scale =====
+// Scale is set as km per grid square. Limits match 1:50,000 … 1:20,000,000 for the 224-px-wide
+// town map at the OGC standard 0.28 mm per pixel (the same convention GIS servers use for scale).
+const KPS_MIN = 0.112, KPS_MAX = 44.8;
+const RF_PER_KPS = 1000*MW/(MW*TILE*0.00028);           // km/square × this = scale denominator (≈ 446,429)
+const map = L.map('map', { zoomSnap:0, zoomDelta:0.5, wheelPxPerZoomLevel:120 }).setView([40.6, -111.8], 8);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:17, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
 const frameEl = document.getElementById('frame');
-function placeFrame(){
+let rot = 0;                                              // frame rotation, degrees clockwise
+// Largest 28:15 frame that still fits on screen once rotated
+function frameSizePx(){
   const wrap = document.getElementById('mapWrap'), W = wrap.clientWidth, H = wrap.clientHeight;
-  let fw = W*0.92, fh = fw*MH/MW;
-  if (fh > H*0.85){ fh = H*0.85; fw = fh*MW/MH; }
-  Object.assign(frameEl.style, { width:fw+'px', height:fh+'px', left:(W-fw)/2+'px', top:(H-fh)/2+'px' });
+  const th = rot*Math.PI/180, c = Math.abs(Math.cos(th)), sn = Math.abs(Math.sin(th));
+  const k = Math.min(W*0.92/(MW*c + MH*sn), H*0.85/(MW*sn + MH*c));
+  return { fw:k*MW, fh:k*MH, W, H };
 }
-window.addEventListener('resize', () => { placeFrame(); map.invalidateSize(); });
+function placeFrame(){
+  const { fw, fh, W, H } = frameSizePx();
+  Object.assign(frameEl.style, { width:fw+'px', height:fh+'px', left:(W-fw)/2+'px', top:(H-fh)/2+'px', transform:`rotate(${rot}deg)` });
+}
+const mppAt = z => 40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*2**z);   // web-mercator metres per pixel
+const currentKps = () => mppAt(map.getZoom())*frameSizePx().fw/MW/1000;
+function zoomForKps(k){
+  const mpp = k*1000*MW/frameSizePx().fw;
+  return Math.log2(40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*mpp));
+}
+let limits = [null, null];
+function updateZoomLimits(){                              // hard stop at 1:50,000 and 1:20,000,000
+  const lo = zoomForKps(KPS_MAX), hi = Math.min(17, zoomForKps(KPS_MIN));
+  if (limits[0] === null || Math.abs(lo - limits[0]) > 0.01 || Math.abs(hi - limits[1]) > 0.01){
+    limits = [lo, hi]; map.setMinZoom(lo); map.setMaxZoom(hi);
+  }
+}
+function updateScaleReadout(){
+  const k = currentKps(), box = document.getElementById('kmSq');
+  if (document.activeElement !== box) box.value = k < 1 ? k.toFixed(3) : k.toFixed(2);
+  const km = v => v < 10 ? v.toFixed(1) : Math.round(v);
+  document.getElementById('scaleInfo').textContent =
+    `Frame ${km(k*MW)} × ${km(k*MH)} km · ≈ 1:${Math.round(k*RF_PER_KPS).toLocaleString()} · allowed 0.112–44.8 km/square`;
+}
+function setKps(k){
+  k = Math.min(KPS_MAX, Math.max(KPS_MIN, k));
+  updateZoomLimits(); map.setZoom(zoomForKps(k), { animate:false }); updateScaleReadout();
+}
+function setRot(r){
+  const k = currentKps();                                 // rotating keeps the chosen km per square
+  rot = ((r % 360) + 360) % 360;
+  placeFrame(); setKps(k);
+  document.getElementById('rotOut').textContent = rot + '°';
+}
+map.on('zoomend moveend', () => { updateZoomLimits(); updateScaleReadout(); });
+window.addEventListener('resize', () => { placeFrame(); map.invalidateSize(); updateZoomLimits(); updateScaleReadout(); });
 placeFrame();
+document.getElementById('rotL').onclick = () => setRot(rot - 15);
+document.getElementById('rotR').onclick = () => setRot(rot + 15);
+document.getElementById('rotReset').onclick = () => setRot(0);
+document.getElementById('kmSet').onclick = () => { const v = parseFloat(document.getElementById('kmSq').value); if (v > 0) setKps(v); };
+document.getElementById('kmSq').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); document.getElementById('kmSet').click(); } });
+updateZoomLimits(); updateScaleReadout();
+
+// The frame's corners (possibly rotated) plus the lat/lon box around them, for data downloads.
 function frameBounds(){
-  const l = frameEl.offsetLeft, t = frameEl.offsetTop, w = frameEl.offsetWidth, h = frameEl.offsetHeight;
-  const nw = map.containerPointToLatLng([l, t]), se = map.containerPointToLatLng([l+w, t+h]);
-  return { n:nw.lat, w:nw.lng, s:se.lat, e:se.lng };
+  const { fw, fh, W, H } = frameSizePx(), th = rot*Math.PI/180, c = Math.cos(th), sn = Math.sin(th);
+  const pt = (u, v) => { const x = (u-.5)*fw, y = (v-.5)*fh; return L.point(W/2 + x*c - y*sn, H/2 + x*sn + y*c); };
+  const [tl, tr, bl, br] = [pt(0,0), pt(1,0), pt(0,1), pt(1,1)].map(p => map.containerPointToLatLng(p));
+  const lats = [tl, tr, bl, br].map(p => p.lat), lngs = [tl, tr, bl, br].map(p => p.lng);
+  const k = currentKps();
+  return { n:Math.max(...lats), s:Math.min(...lats), e:Math.max(...lngs), w:Math.min(...lngs),
+           corners:{ tl, tr, bl, br }, rot, kmPerSquare:+k.toFixed(4), wKm:k*MW, hKm:k*MH };
 }
 
 // ===== Helpers =====
@@ -194,13 +259,21 @@ function makeBig(t, list, strict, onlyDir){
   return false;
 }
 
+// Grid ↔ world: one affine transform in web-mercator pixels at zoom z.
+// Origin o = frame's top-left corner; ex / ey = one grid square along the frame's (rotated) x / y axes.
+function makeGen(b, z){
+  const o = map.project(b.corners.tl, z), tr = map.project(b.corners.tr, z), bl = map.project(b.corners.bl, z);
+  const ex = { x:(tr.x - o.x)/MW, y:(tr.y - o.y)/MW }, ey = { x:(bl.x - o.x)/MH, y:(bl.y - o.y)/MH };
+  return { z, o, ex, ey, det:ex.x*ey.y - ex.y*ey.x, b };
+}
+const gridToPx = (g, u, v) => ({ x:g.o.x + u*g.ex.x + v*g.ey.x, y:g.o.y + u*g.ex.y + v*g.ey.y });
 function toSqF(lat, lng){            // fractional square coords
-  const g = state.gen, p = map.project([lat, lng], g.z);
-  return { x:(p.x - g.p1.x)/g.pw*MW, y:(p.y - g.p1.y)/g.ph*MH };
+  const g = state.gen, p = map.project([lat, lng], g.z), dx = p.x - g.o.x, dy = p.y - g.o.y;
+  return { x:(dx*g.ey.y - dy*g.ey.x)/g.det, y:(g.ex.x*dy - g.ex.y*dx)/g.det };
 }
 function toLatLng(x, y){              // square centre → lat/lng
-  const g = state.gen;
-  return map.unproject([g.p1.x + (x+.5)/MW*g.pw, g.p1.y + (y+.5)/MH*g.ph], g.z);
+  const g = state.gen, p = gridToPx(g, x+.5, y+.5);
+  return map.unproject([p.x, p.y], g.z);
 }
 
 // ===== Tile mosaics (OSM for water, Terrarium for elevation) =====
@@ -240,13 +313,16 @@ async function fetchMosaic(b, urlFn, minW, maxW, maxZ, tracker){
 }
 
 // Average a function over the mosaic pixels that fall inside sub-cell (sx, sy)
+// (4×4 sample points per sub-cell, placed along the rotated grid, read from the mosaic's own zoom level)
 function sampleSub(m, sx, sy, fn){
-  const cw = m.pw/SW, ch = m.ph/SH, step = Math.max(1, Math.floor(Math.min(cw, ch)/3));
+  const g = state.gen, f = 2 ** (m.z - g.z), K = 4;
   let sum = 0, n = 0;
-  for (let y = Math.floor(sy*ch); y < Math.min(m.ph, Math.ceil((sy+1)*ch)); y += step)
-    for (let x = Math.floor(sx*cw); x < Math.min(m.pw, Math.ceil((sx+1)*cw)); x += step){
-      const i = (y*m.pw + x)*4; sum += fn(m.data[i], m.data[i+1], m.data[i+2], m.data[i+3]); n++;
-    }
+  for (let j = 0; j < K; j++) for (let i = 0; i < K; i++){
+    const p = gridToPx(g, (sx + (i+.5)/K)/SUB, (sy + (j+.5)/K)/SUB);
+    const x = Math.floor(p.x*f - m.p1.x), y = Math.floor(p.y*f - m.p1.y);
+    if (x < 0 || y < 0 || x >= m.pw || y >= m.ph) continue;
+    const k = (y*m.pw + x)*4; sum += fn(m.data[k], m.data[k+1], m.data[k+2], m.data[k+3]); n++;
+  }
   return n ? sum/n : 0;
 }
 
@@ -431,6 +507,7 @@ async function overpass(q, onBytes, deadline = Date.now() + 15000){
 
 // Real frame size in km (equirectangular at mid-latitude: plenty accurate at region scale)
 function frameKm(b){
+  if (b.wKm) return { w:b.wKm, h:b.hKm };      // true frame size (the lat/lon box is bigger when rotated)
   const R = 6371, rad = Math.PI/180, lat = (b.n + b.s)/2*rad;
   return { w:R*Math.cos(lat)*Math.abs(b.e - b.w)*rad, h:R*Math.abs(b.n - b.s)*rad };
 }
@@ -942,7 +1019,20 @@ function render(){
   const selId = state.linkFrom || (state.sel && state.sel.type === 'town' && state.sel.id);
   if (selId && boxes[selId]) bracket(boxes[selId]);
   if (state.sel && state.sel.type === 'cell') bracket({ x0:state.sel.x*TILE, y0:state.sel.y*TILE, w:8, h:8 });
+  drawNorth();
   drawCursor();
+}
+// Small north arrow in the corner whenever the frame was rotated
+function drawNorth(){
+  const g = state.gen; if (!g || !g.b.rot) return;
+  const th = g.b.rot*Math.PI/180, dx = -Math.sin(th), dy = -Math.cos(th), cx = 213, cy = 11;
+  px(cx-8, cy-8, 17, 17, 'rgba(0,0,0,.45)');
+  ctx.save(); ctx.lineCap = 'round';
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx - dx*5, cy - dy*5); ctx.lineTo(cx + dx*5, cy + dy*5); ctx.stroke();
+  ctx.fillStyle = '#f83030'; ctx.beginPath();
+  ctx.moveTo(cx + dx*7, cy + dy*7); ctx.lineTo(cx + dx*2 - dy*3, cy + dy*2 + dx*3); ctx.lineTo(cx + dx*2 + dy*3, cy + dy*2 - dx*3);
+  ctx.fill(); ctx.restore();
 }
 
 // ===== Info box =====
@@ -1148,7 +1238,7 @@ async function forge(){
       timed('map data', ob => loadStatic(b, ob, tiles), onBytes).catch(() => null)
     ]);
     if (!dem.data) state.notes.push('Elevation unavailable — no mountains.');
-    state.gen = { z:osm.z, p1:osm.p1, pw:osm.pw, ph:osm.ph, b };
+    state.gen = makeGen(b, osm.z);
     const app = stat ? staticToApp(stat, b) : null;
     if (!osm.data) state.notes.push(app ? 'Map tiles unreadable — lakes from bundled data.' : 'Couldn\'t read water from map tiles.');
     buildTerrain(osm, dem, app ? app.lakes : []);

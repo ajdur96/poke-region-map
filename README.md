@@ -25,7 +25,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 ## Usage
 
 1. Open the site (https://ajdur96.github.io/poke-region-map/), or run `python -m http.server` in this folder and open `http://localhost:8000`. Opening the file directly won't load the bundled data or the map tiles.
-2. Search or pan so the dashed 28×15 frame covers your region.
+2. Search or pan so the dashed 28×15 frame covers your region. Rotate the frame in 15° steps to fit coastlines or valleys, and type an exact **km per square** (0.112–44.8, i.e. about 1:50,000 to 1:20,000,000 at the OGC 0.28 mm pixel). Rotated maps get a north arrow.
 3. Set the number of towns and extra routes, then press **Forge Region**.
 4. Edit as needed, then export.
 
