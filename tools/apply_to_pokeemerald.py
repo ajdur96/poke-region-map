@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Apply a Region Map Forge export to a pokeemerald (or pokeemerald-expansion) checkout.
+"""Apply a Region Map Forge export to a pokeemerald or pokeemerald-expansion checkout.
+
+Tested against pret/pokeemerald and rh-hideout/pokeemerald-expansion (master and upcoming), using each
+project's own gbagfx (and expansion's compresSmol) on the installed files.
 
 Usage:
     python apply_to_pokeemerald.py /path/to/pokeemerald
@@ -66,8 +69,9 @@ def main():
         fail('region_export.json layout is not 28x15')
 
     tiles_file = None
-    for cand, pattern in ((os.path.join(root, 'src', 'region_map.c'), r'(map\.png"[^)]*?-num_tiles\s+)(\d+)'),
-                          (os.path.join(root, 'graphics_file_rules.mk'), r'(region_map/map\.8bpp[^\n]*\n[^\n]*?-num_tiles\s+)(\d+)')):
+    # the exact region-map path, so other maps (e.g. the Pokedex area map, graphics/pokedex/region_map.png) are never touched
+    for cand, pattern in ((os.path.join(root, 'src', 'region_map.c'), r'(pokenav/region_map/map\.png"[^)]*?-num_tiles\s+)(\d+)'),
+                          (os.path.join(root, 'graphics_file_rules.mk'), r'(pokenav/region_map/map\.8bpp[^\n]*\n[^\n]*?-num_tiles\s+)(\d+)')):
         if os.path.exists(cand) and re.search(pattern, open(cand, encoding='utf-8').read()):
             tiles_file = (cand, pattern)
             break

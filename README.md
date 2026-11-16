@@ -49,7 +49,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 
 ## Export to pokeemerald
 
-**EXPORT TO POKEEMERALD** downloads a ZIP for a [pret/pokeemerald](https://github.com/pret/pokeemerald) (or pokeemerald-expansion) checkout:
+**EXPORT TO POKEEMERALD** downloads a ZIP for a [pret/pokeemerald](https://github.com/pret/pokeemerald) or [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion) checkout (tested on expansion `master` and `upcoming`, including its smol-compressed graphics):
 
 1. Unzip it anywhere.
 2. `python apply_to_pokeemerald.py /path/to/pokeemerald`
@@ -62,6 +62,7 @@ How it fits into Emerald:
 - **Map picture** in Emerald's exact format: a 64×64 affine tilemap (`map.bin`, one byte per tile, map grid at tile (1, 2)), 8-bit tiles (`map.png`, at most 256; near-duplicates are merged if needed) and a 48-colour palette (`map.pal`) loaded at index 112. Verified with pokeemerald's own `gbagfx`.
 - The script edits `region_map_sections.json`, rewrites `region_map_layout.h` (keeping your file's declaration), installs the graphics and updates `-num_tiles`. Each changed file is backed up once as `*.forge-backup`.
 - Fly destinations and maps still point at the original Hoenn maps until you build your own; unused Hoenn sections keep their names and positions but aren't on the map.
+- Not yet included: the separate **Pokédex area map** (`graphics/pokedex/region_map.png`), which both projects use on the Pokédex "Area" screen; it still shows Hoenn.
 
 `tools/apply_to_pokeemerald.py` is the install script (the site includes it in each ZIP).
 
