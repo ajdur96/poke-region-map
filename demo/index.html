@@ -342,7 +342,7 @@ const TOWN_GAP = 3;
 const gapOK = (sq, list, except) => list.every(o => o === except || o.kind === 'landmark' || footprint(o).every(f => cheb(f, sq) >= TOWN_GAP));
 // Try to grow a city to 2 squares around its current square. strict = only on flat land, keeping the town gap.
 function makeBig(t, list, strict, onlyDir){
-  const good = (x, y) => inSq(x, y) && !occupiedIn(list, x, y, t) &&
+  const good = (x, y) => inner(x, y) && !occupiedIn(list, x, y, t) &&
     (!strict || (sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain' && gapOK({ x, y }, list, t)));
   const opts = [[0,0,'h'], [-1,0,'h'], [0,0,'v'], [0,-1,'v']].filter(o => !onlyDir || o[2] === onlyDir);
   for (const [dx, dy, dir] of opts){
@@ -756,8 +756,12 @@ function ingestRoads(ways){
 }
 
 // ===== Town picking =====
+// Places never sit on the outermost ring of squares (they'd look cut off by the frame); routes still may.
+const inner = (x, y) => x >= 1 && y >= 1 && x <= MW - 2 && y <= MH - 2;
+// A place that falls on the edge ring is pulled one square inward, so it isn't lost
+const pullIn = c => ({ ...c, x:Math.min(MW - 2, Math.max(1, c.x)), y:Math.min(MH - 2, Math.max(1, c.y)) });
 function snapToLand(c){
-  const ok = (x, y) => inSq(x, y) && sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain';
+  const ok = (x, y) => inner(x, y) && sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain';
   if (ok(c.x, c.y)) return { x:c.x, y:c.y };
   for (let r = 1; r <= 3; r++)
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++)
@@ -782,7 +786,7 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
   const base = { city:300000, town:30000, village:3000, suburb:2000, quarter:1000, hamlet:300, neighbourhood:500 };
   const cands = places.filter(p => p.name && !lockedNames.has(p.name)).map(p => {
     const f = toSqF(p.lat, p.lon); return { ...p, x:Math.floor(f.x), y:Math.floor(f.y) };
-  }).filter(c => inSq(c.x, c.y));
+  }).filter(c => inSq(c.x, c.y)).map(pullIn);
   cands.forEach(c => {
     // real population when OSM has it; the tier's typical size only as a fallback
     c.score = Math.log10(c.pop || base[c.place] || 1000) + (['yes','2','4'].includes(c.capital) ? 0.6 : 0)
@@ -829,7 +833,7 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
     const taken = new Set(towns.map(t => t.name));
     // 1) real landmarks first — natural ones (peaks, lakes, parks) stay exactly where they are
     const lms = landmarks.map(l => { const f = toSqF(l.lat, l.lon); return { ...l, x:Math.floor(f.x), y:Math.floor(f.y), rank:l.score + jitter*rng() }; })
-      .filter(l => inSq(l.x, l.y) && !taken.has(l.name)).sort((a, b) => b.rank - a.rank);
+      .filter(l => inSq(l.x, l.y) && !taken.has(l.name)).map(pullIn).sort((a, b) => b.rank - a.rank);
     for (const l of lms){
       if (isLm() >= nLm) break;
       // notable landmarks may sit right next to a town (just not on it); keep landmarks 3 apart from each other
@@ -1127,7 +1131,7 @@ function nameRoutes(){
 }
 
 function snapLandmarks(){
-  const cells = routePaths().flatMap(p => p.squares);
+  const cells = routePaths().flatMap(p => p.squares).filter(c => inner(c.x, c.y));
   for (const t of state.towns.filter(t => t.kind === 'landmark' && !t.fixed && !t.locked)){
     let best = null;
     for (const c of cells){
@@ -1493,6 +1497,7 @@ cv.addEventListener('pointerdown', async e => {
     case 'add': {
       const here = occupiedIn(state.towns, c.x, c.y);
       if (here){ state.sel = { type:'town', id:here.id }; break; }
+      if (!inner(c.x, c.y)){ setStatus('Places can\'t go on the edge squares of the map.'); break; }
       const name = await askText('Name your new town:', 'New Town');
       if (name === null) return;
       pushUndo();
@@ -1529,7 +1534,7 @@ cv.addEventListener('pointermove', e => {
   const c = cellFromEvent(e);
   if (e.pointerType === 'mouse' && !dragging && !painting && !e.buttons) moveCursor(c.x, c.y);
   if (dragging && (c.x !== dragging.x || c.y !== dragging.y) &&
-      footprint(dragging, c.x, c.y).every(f => inSq(f.x, f.y) && !occupiedIn(state.towns, f.x, f.y, dragging))){
+      footprint(dragging, c.x, c.y).every(f => inner(f.x, f.y) && !occupiedIn(state.towns, f.x, f.y, dragging))){
     dragging.x = c.x; dragging.y = c.y; moved = true; state.cursor = { x:c.x, y:c.y }; render();
   } else if (painting) paint(c);
 });
