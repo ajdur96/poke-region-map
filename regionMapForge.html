@@ -397,20 +397,29 @@ async function fetchLandmarks(b, onBytes){
     return { name:t['name:en'] || t.name, lat, lon, score, natural };
   }).filter(l => l.name && l.lat != null);
 }
+// Time each download and count its bytes, so the info box can show which one is slow.
+async function timed(name, fn, onBytes){
+  const rec = { s:0, mb:0 }, t0 = Date.now();
+  state.timings[name] = rec;
+  try { return await fn(n => { rec.mb += n/1048576; onBytes(n); }); }
+  finally { rec.s = (Date.now() - t0)/1000; }
+}
 async function placesAndLandmarks(b, z, onBytes){
-  const places = await fetchPlaces(b, z, onBytes);                       // sequential: be kind to Overpass
+  const places = await timed('towns', ob => fetchPlaces(b, z, ob), onBytes);      // sequential: be kind to Overpass
   let landmarks = [];
-  try { landmarks = await fetchLandmarks(b, onBytes); } catch (e) { state.notes.push('Landmark lookup failed.'); }
+  try { landmarks = await timed('landmarks', ob => fetchLandmarks(b, ob), onBytes); } catch (e) { state.notes.push('Landmark lookup failed.'); }
   return { places, landmarks };
 }
 
 // Road detail by frame width. One grid square ≈ width/28, so at 150 km a square is ~5 km:
 // primary roads are finer than the grid can show, yet they're most of the download.
+// Only the top road classes: their shapes are most of the download, and a grid square is
+// kilometres across, so smaller roads add wait time without changing the map much.
 function roadTier(b){
   const w = frameKm(b).w;
-  if (w >= 150) return { cls:'motorway|trunk', riverFilter:'["name"]', label:'highways only' };
-  if (w >= 50)  return { cls:'motorway|trunk|primary', riverFilter:'', label:'highways + primary roads' };
-  return { cls:'motorway|trunk|primary|secondary', riverFilter:'', label:'highways + primary + secondary roads' };
+  if (w >= 150) return { cls:'motorway', riverFilter:'["name"]', label:'motorways only' };
+  if (w >= 50)  return { cls:'motorway|trunk', riverFilter:'["name"]', label:'motorways + trunk roads' };
+  return { cls:'motorway|trunk|primary', riverFilter:'', label:'motorways + trunk + primary roads' };
 }
 async function fetchWays(b, z, withRivers, onBytes){
   const { cls, riverFilter } = roadTier(b);
@@ -912,7 +921,8 @@ function showInfo(){
   }
   const nT = state.towns.filter(t => t.kind !== 'landmark').length;
   const avgRoad = state.routes.length ? Math.round(routePaths().reduce((s, p) => s + p.roadFrac, 0)/state.routes.length*100) : 0;
-  box.innerHTML = `Region forged!<small>${nT} towns · ${state.routes.length} routes · ${avgRoad}% of route steps follow real roads${state.notes.length ? '<br>⚠ ' + state.notes.join(' ') : ''}</small>`;
+  const load = Object.entries(state.timings || {}).map(([k, v]) => `${k} ${v.s.toFixed(1)} s (${v.mb.toFixed(1)} MB)`).join(' · ');
+  box.innerHTML = `Region forged!<small>${nT} towns · ${state.routes.length} routes · ${avgRoad}% of route steps follow real roads${load ? '<br>Load: ' + load : ''}${state.notes.length ? '<br>⚠ ' + state.notes.join(' ') : ''}</small>`;
 }
 
 // ===== Canvas interaction =====
@@ -1041,7 +1051,7 @@ function endProgress(){ $('progress').style.display = 'none'; $('progressFill').
 function clearRegion(){
   Object.assign(state, { terrain:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
-    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), notes:[] });
+    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), notes:[], timings:{} });
   pathCache.clear(); $('popup').style.display = 'none';
 }
 
@@ -1076,7 +1086,7 @@ async function forge(){
       const secs = (Date.now() - t0)/1000;
       setProgress(35 + 57*(1 - Math.exp(-secs/15)), null, stageLabel());
     }, 250);
-    const [placesR, waysR] = await Promise.allSettled([placesAndLandmarks(b, osm.z, onBytes), getWays(b, osm.z, onBytes)]);
+    const [placesR, waysR] = await Promise.allSettled([placesAndLandmarks(b, osm.z, onBytes), timed('roads & rivers', ob => getWays(b, osm.z, ob), onBytes)]);
     clearInterval(ticker); ticker = null;
 
     setProgress(92, 'route', '');
