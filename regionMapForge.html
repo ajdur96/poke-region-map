@@ -100,6 +100,7 @@
       <label><input type="checkbox" id="showGrid"> Emerald grid</label>
       <label><input type="checkbox" id="showRoads"> Real roads</label>
       <label><input type="checkbox" id="showRivers" checked> Rivers</label>
+      <label><input type="checkbox" id="flavorNames"> Pokémon-style route names</label>
     </div>
     <div class="textbox pixel" id="infoBox"></div>
     <div id="infoActions"></div>
@@ -433,17 +434,20 @@ async function loadStatic(b, onBytes, tracker){
   const tiles = await Promise.all(keys.map(k => fetch(STATIC_DIR + k + '.json')
     .then(r => r.ok ? readJson(r, onBytes) : null)
     .finally(() => { if (tracker){ tracker.done++; tracker.onTick(); } })));
-  const out = { roads:[], rivers:[], lakes:[], places:[], peaks:[] }, seen = new Set();
+  const out = { roads:[], rivers:[], lakes:[], places:[], peaks:[], seas:[], regions:[] }, seen = new Set();
   const m = 0.2;                                 // keep features slightly outside the frame so edges connect
   const nearFrame = pts => pts.some(p => p.lat > b.s - m && p.lat < b.n + m && p.lon > b.w - m && p.lon < b.e + m);
   for (const t of tiles){
     if (!t) continue;
     for (const layer of ['roads', 'rivers', 'lakes'])
-      for (const [id, attr, enc] of t[layer]){
+      for (const row of t[layer]){
+        const [id, attr] = row, enc = row[row.length-1], label = layer === 'roads' ? row[2] : '';
         const key = layer + id; if (seen.has(key)) continue; seen.add(key);   // a feature can sit in several tiles
         const pts = decodeLine(enc);
-        if (nearFrame(pts)) out[layer].push({ id, attr, pts });
+        if (nearFrame(pts)) out[layer].push({ id, attr, label, pts });
       }
+    for (const [name, enc] of (t.seas || [])){ const pts = decodeLine(enc); if (nearFrame(pts)) out.seas.push({ name, pts }); }
+    for (const [name, kind, enc] of (t.regions || [])){ const pts = decodeLine(enc); if (nearFrame(pts)) out.regions.push({ name, kind, pts }); }
     for (const [name, lat, lon, pop, cap] of t.places)
       if (lat > b.s && lat < b.n && lon > b.w && lon < b.e) out.places.push({ name, lat, lon, pop, cap });
     for (const [name, lat, lon, ele] of t.peaks)
@@ -455,7 +459,7 @@ async function loadStatic(b, onBytes, tracker){
 function staticToApp(st, b){
   const { minCls } = roadTier(b);
   const roads = st.roads.filter(r => r.attr >= minCls)
-    .map(r => ({ tags:{ highway: r.attr === 3 ? 'motorway' : r.attr === 2 ? 'trunk' : 'primary' }, geometry:r.pts }));
+    .map(r => ({ tags:{ highway: r.attr === 3 ? 'motorway' : r.attr === 2 ? 'trunk' : 'primary', ref:r.label }, geometry:r.pts }));
   const rivers = st.rivers.map(r => ({ id:r.id, tags:{ waterway:'river', ...(r.attr ? { name:r.attr } : {}) }, geometry:r.pts }));
   const places = st.places.map(p => ({ name:p.name, lat:p.lat, lon:p.lon, pop:p.pop, capital:p.cap,
     place: p.pop >= 100000 ? 'city' : p.pop > 0 ? 'town' : 'village' }));   // pop 0 = GeoNames town (> 1000 people)
@@ -466,7 +470,9 @@ function staticToApp(st, b){
       return { name:l.attr, lat:c.lat, lon:c.lon, score:1.5, natural:true };
     }).filter(l => l.lat > b.s && l.lat < b.n && l.lon > b.w && l.lon < b.e)
   ];
-  return { roads, rivers, places, landmarks, lakes:st.lakes.map(l => l.pts) };
+  return { roads, rivers, places, landmarks, lakes:st.lakes.map(l => l.pts),
+           named:{ lakes:st.lakes.filter(l => l.attr).map(l => ({ name:l.attr, pts:l.pts })), seas:st.seas, regions:st.regions,
+                   peaks:st.peaks.map(p => ({ name:p.name, lat:p.lat, lon:p.lon })) } };
 }
 // Fill bundled lake outlines into the terrain (used when the OSM map tiles couldn't be read)
 function paintLakes(terr, lakes){
@@ -546,15 +552,15 @@ async function fetchLandmarks(b, onBytes, deadline){
   );out center tags 400;`, onBytes, deadline);
   return json.elements.map(e => {
     const t = e.tags, lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
-    let score = 1, natural = false;
-    if (/peak|volcano/.test(t.natural || '')){ score = 1 + (parseFloat(t.ele) || 0)/1000; natural = true; }
+    let score = 1, natural = false, kind = '';
+    if (/peak|volcano/.test(t.natural || '')){ score = 1 + (parseFloat(t.ele) || 0)/1000; natural = true; kind = 'peak'; }
     else if (t.natural === 'water'){ score = 1.5; natural = true; }
     else if (t.boundary === 'national_park'){ score = 2.5; natural = true; }
     else if (t.boundary || t.leisure){ score = 1.2; natural = true; }
     else if (t.man_made === 'lighthouse'){ score = 0.9; }
     else if (t.historic){ score = 0.8; }
     else if (t.natural){ natural = true; }
-    return { name:t['name:en'] || t.name, lat, lon, score, natural };
+    return { name:t['name:en'] || t.name, lat, lon, score, natural, kind };
   }).filter(l => l.name && l.lat != null);
 }
 // Time each download and count its bytes, so the info box can show which one is slow.
@@ -627,9 +633,13 @@ function ingestRivers(ways){
 // Trace every road through the 28x15 grid, recording which square-to-square steps a real road makes.
 function ingestRoads(ways){
   const W = { motorway:3, trunk:2.5, primary:1.5, secondary:1 };
-  const roadSq = new Float32Array(MW*MH), edges = new Set();
+  const roadSq = new Float32Array(MW*MH), edges = new Set(), edgeName = new Map();
   for (const way of ways){
-    const w = W[way.tags.highway] || 1;
+    const w = W[way.tags.highway] || 1, label = way.tags.ref || way.tags.name || '';
+    const addEdge = (a, b) => {                       // remember the most important named road on each step
+      const k = edgeKey(a, b); edges.add(k);
+      if (label){ const cur = edgeName.get(k); if (!cur || cur.w < w) edgeName.set(k, { name:label.split(';')[0].trim(), w }); }
+    };
     const pts = way.geometry.map(p => toSqF(p.lat, p.lon));
     let cur = null;
     for (let i = 0; i < pts.length-1; i++){
@@ -640,9 +650,9 @@ function ingestRoads(ways){
         const sq = y*MW + x;
         if (cur !== null && sq !== cur){
           const cx = cur % MW, cy = (cur/MW) | 0;
-          if (Math.abs(cx-x) + Math.abs(cy-y) === 1) edges.add(edgeKey(cur, sq));
+          if (Math.abs(cx-x) + Math.abs(cy-y) === 1) addEdge(cur, sq);
           else if (Math.abs(cx-x) === 1 && Math.abs(cy-y) === 1){       // diagonal → two orthogonal steps
-            const mid = cy*MW + x; edges.add(edgeKey(cur, mid)); edges.add(edgeKey(mid, sq));
+            const mid = cy*MW + x; addEdge(cur, mid); addEdge(mid, sq);
           }
         }
         if (sq !== cur) roadSq[sq] += w;
@@ -650,7 +660,7 @@ function ingestRoads(ways){
       }
     }
   }
-  state.roadSq = roadSq; state.roadEdges = edges; pathCache.clear();
+  state.roadSq = roadSq; state.roadEdges = edges; state.roadEdgeName = edgeName; pathCache.clear();
 }
 
 // ===== Town picking =====
@@ -840,6 +850,10 @@ function renumber(){
   }
   state.routes.forEach(r => r.num = null);
   if (!start) return;
+  try { numberRoutes(start); } finally { nameRoutes(); }
+}
+// Journey order (used to give the earliest routes first pick of names, and in the export)
+function numberRoutes(start){
   const order = [start.id, ...state.towns.map(t => t.id).filter(id => id !== start.id)];
   const visited = new Set(); let n = 201;
   for (const root of order){
@@ -855,6 +869,146 @@ function renumber(){
         if (!visited.has(v)){ visited.add(v); queue.push(v); }
       }
     }
+  }
+}
+
+// ===== Route names =====
+// Each route is named after the most distinctive real feature it passes, in priority order:
+// roads → rivers → lakes → seas → mountains. Only if none qualify does it fall back to terrain character
+// (using a real landform name like "Great Basin" when the route crosses one).
+function pointInPoly(px, py, pts){
+  let inside = false;
+  for (let i = 0, j = pts.length-1; i < pts.length; j = i++){
+    const a = pts[i], c = pts[j];
+    if ((a.y > py) !== (c.y > py) && px < (c.x - a.x)*(py - a.y)/(c.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+// Which named polygon (if any) covers each grid square's centre
+function polysToSquares(polys, keep = () => true){
+  const out = new Map();
+  for (const poly of polys){
+    const pts = poly.pts.map(p => toSqF(p.lat, p.lon));
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    for (let y = Math.max(0, Math.floor(Math.min(...ys))); y <= Math.min(MH-1, Math.ceil(Math.max(...ys))); y++)
+      for (let x = Math.max(0, Math.floor(Math.min(...xs))); x <= Math.min(MW-1, Math.ceil(Math.max(...xs))); x++)
+        if (!out.has(y*MW + x) && keep(x, y, poly) && pointInPoly(x + .5, y + .5, pts)) out.set(y*MW + x, poly);
+  }
+  return out;
+}
+const titleCase = t => t.replace(/(^|\s)([a-z])/g, (m, a, c) => a + c.toUpperCase());   // "Atlantic coastal plain" → "Atlantic Coastal Plain"
+function computeNameMaps(named, landmarks){
+  const n = named || { lakes:[], seas:[], regions:[], peaks:[] };
+  const water = (x, y) => sqKind(x, y) === 'water';
+  state.names = {
+    lake:  new Map([...polysToSquares(n.lakes)].map(([k, v]) => [k, v.name])),
+    sea:   new Map([...polysToSquares(n.seas, water)].map(([k, v]) => [k, v.name])),
+    range: new Map([...polysToSquares(n.regions.filter(r => r.kind === 'range'))].map(([k, v]) => [k, titleCase(v.name)])),
+    land:  new Map([...polysToSquares(n.regions.filter(r => r.kind !== 'range'))].map(([k, v]) => [k, { ...v, name:titleCase(v.name) }])),
+    peaks: [...n.peaks, ...landmarks.filter(l => l.kind === 'peak')]
+             .map(p => ({ name:p.name, ...toSqF(p.lat, p.lon) })).filter(p => p.x > -2 && p.y > -2 && p.x < MW+2 && p.y < MH+2)
+  };
+}
+
+const ROUTE_TPL = {
+  road:       { plain:['{n} Corridor'],  flavor:['{n} Cycling Road', '{n} Speedway', '{n} Trailway'] },
+  riverAlong: { plain:['{n} Walk'],      flavor:['{b} Riverbank Trail', '{b} Waterside Path', '{b} Rapids Trail'] },
+  riverCross: { plain:['{n} Crossing'],  flavor:['{b} Bridge', '{b} Ford', '{b} Stepping Stones'] },
+  lakeCross:  { plain:['{n} Crossing'],  flavor:['{n} Waterway', '{n} Surf Route', '{n} Mistway'] },
+  lakeShore:  { plain:['{n} Shore'],     flavor:['{n} Lakefront', '{n} Shoreside Path'] },
+  seaCross:   { plain:['{n} Passage'],   flavor:['{n} Seaway', '{n} Surf Route', '{n} Currents'] },
+  seaCoast:   { plain:['{n} Coast'],     flavor:['{n} Beachfront', '{n} Seabreeze Path'] },
+  peak:       { plain:['{n} Pass'],      flavor:['{n} Climb', '{n} Summit Trail'] },
+  range:      { plain:['{n} Pass'],      flavor:['{n} Highpass', '{n} Cliffside Trail'] }
+};
+const TERRAIN_WORDS = {
+  ridge:{ plain:'Ridge',     flavor:['Skyline Ridge', 'Craggy Ridge'] },
+  hills:{ plain:'Foothills', flavor:['Rolling Hills', 'Windy Foothills'] },
+  shore:{ plain:'Shoreline', flavor:['Seabreeze Path', 'Tidepool Trail'] },
+  water:{ plain:'Waters',    flavor:['Open Waters', 'Wavecrest Route'] },
+  flats:{ plain:'Flats',     flavor:['Windswept Flats', 'Sunlit Meadows'] }
+};
+const ROAD_WORDS = /\b(road|highway|freeway|parkway|corridor|expressway|turnpike|way|avenue|street|boulevard|trail)$/i;
+const baseName = n => n.replace(/\s+(river|creek|stream)$/i, '');
+
+function fillTpl(kind, name, pick, flavor){
+  if (kind === 'road' && !flavor && ROAD_WORDS.test(name)) return name;       // "Mountain View Corridor" stays as is
+  const list = ROUTE_TPL[kind][flavor ? 'flavor' : 'plain'];
+  return list[Math.floor(pick*list.length)].replace('{n}', name).replace('{b}', baseName(name));
+}
+
+// Compass direction of a route's middle, relative to the frame centre, in real-world terms (handles rotation)
+function compassOf(sqs){
+  const m = sqs[Math.floor(sqs.length/2)], dx = m.x + .5 - MW/2, dy = m.y + .5 - MH/2;
+  if (Math.hypot(dx, dy) < 3) return 'Central';
+  const th = (state.gen?.b.rot || 0)*Math.PI/180, sx = dx*Math.cos(th) - dy*Math.sin(th), sy = dx*Math.sin(th) + dy*Math.cos(th);
+  return Math.abs(sx) > Math.abs(sy) ? (sx > 0 ? 'East' : 'West') : (sy > 0 ? 'South' : 'North');
+}
+
+function routeCandidates(sqs){
+  const N = state.names, n = sqs.length, idx = s => s.y*MW + s.x, cands = [];
+  const top = counts => Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  // roads: share of the route's steps that run along one named road
+  const rc = {};
+  for (let i = 1; i < n; i++){ const e = state.roadEdgeName?.get(edgeKey(idx(sqs[i-1]), idx(sqs[i]))); if (e) rc[e.name] = (rc[e.name]||0) + 1; }
+  const tr = top(rc); if (tr && tr[1]/Math.max(1, n-1) >= 0.3) cands.push({ kind:'road', name:tr[0], score:tr[1]/(n-1) });
+  // rivers: following one (3+ squares) or just crossing it
+  const rv = {}; sqs.forEach(s => { const nm = state.riverNames.get(idx(s)); if (nm) rv[nm] = (rv[nm]||0) + 1; });
+  const tv = top(rv);
+  if (tv) cands.push(tv[1] >= 3 || tv[1]/n >= 0.3 ? { kind:'riverAlong', name:tv[0], score:Math.max(tv[1]/n, .3)*0.95 }
+                                                  : { kind:'riverCross', name:tv[0], score:0.25*0.95 });
+  if (!N) return cands;
+  // lakes and seas: crossing them (squares on the water) or running along their shore (next to it)
+  const near = (map, s) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+    const x = s.x+dx, y = s.y+dy; if (inSq(x, y) && map.has(y*MW + x)) return map.get(y*MW + x); } return null; };
+  for (const [map, cross, shore, w] of [[N.lake, 'lakeCross', 'lakeShore', 0.9], [N.sea, 'seaCross', 'seaCoast', 0.85]]){
+    const inC = {}, adjC = {};
+    sqs.forEach(s => { const a = map.get(idx(s)); if (a) inC[a] = (inC[a]||0) + 1; else { const b = near(map, s); if (b) adjC[b] = (adjC[b]||0) + 1; } });
+    const ti = top(inC), ta = top(adjC);
+    if (ti && (ti[1] >= 2 || ti[1]/n >= 0.3)) cands.push({ kind:cross, name:ti[0], score:Math.max(ti[1]/n, .3)*w });
+    else if (ta && ta[1] >= 2) cands.push({ kind:shore, name:ta[0], score:Math.max(ta[1]/n, .3)*w*0.9 });
+  }
+  // mountains: high squares near a named peak, or inside a named range
+  const mc = {};
+  sqs.forEach(s => {
+    const k = sqKind(s.x, s.y); if (k !== 'mountain' && k !== 'hill') return;
+    let best = null; for (const p of N.peaks){ const d = Math.hypot(p.x - s.x - .5, p.y - s.y - .5); if (d < 2.5 && (!best || d < best.d)) best = { d, name:p.name }; }
+    const key = best ? 'peak|' + best.name : N.range.has(idx(s)) ? 'range|' + N.range.get(idx(s)) : null;
+    if (key) mc[key] = (mc[key]||0) + 1;
+  });
+  const tm = top(mc);
+  if (tm && (tm[1] >= 2 || n < 6)){ const [kind, name] = tm[0].split('|'); cands.push({ kind, name, score:Math.max(tm[1]/n, .25)*0.8 }); }
+  return cands.sort((a, b) => b.score - a.score);
+}
+
+function terrainName(sqs, pick, flavor){
+  const n = sqs.length, cnt = { ridge:0, hills:0, shore:0, water:0, flats:0 }, land = {};
+  sqs.forEach(s => {
+    const k = sqKind(s.x, s.y);
+    let coastal = false; for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) if (inSq(s.x+dx, s.y+dy) && sqKind(s.x+dx, s.y+dy) === 'water') coastal = true;
+    cnt[k === 'mountain' ? 'ridge' : k === 'hill' ? 'hills' : k === 'water' ? 'water' : coastal ? 'shore' : 'flats']++;
+    const r = state.names?.land.get(s.y*MW + s.x); if (r) land[r.name] = (land[r.name]||0) + 1;
+  });
+  const word = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0], W = TERRAIN_WORDS[word];
+  const w = flavor ? W.flavor[Math.floor(pick*W.flavor.length)] : W.plain;
+  const region = Object.entries(land).sort((a, b) => b[1] - a[1])[0];
+  return region && region[1]/n >= 0.4 ? `${region[0]} ${w}` : `${compassOf(sqs)} ${w}`;
+}
+
+function nameRoutes(){
+  const flavor = $('flavorNames').checked, used = new Set(), paths = routePaths();
+  state.routes.forEach(r => { if (r.custom) used.add(r.name); });
+  const order = state.routes.map((r, i) => i).sort((a, b) => (state.routes[a].num ?? 1e9) - (state.routes[b].num ?? 1e9));
+  for (const i of order){                            // earliest routes in the journey get first pick of names
+    const r = state.routes[i]; if (r.custom) continue;
+    const sqs = paths[i].squares, pick = hash(r.a*31 + 7, r.b*17 + 3);
+    const cands = routeCandidates(sqs).map(c => fillTpl(c.kind, c.name, pick, flavor));
+    // 1) a real feature's name  2) the same, with a compass word when another route already has it  3) terrain
+    let name = cands.find(nm => !used.has(nm)) || cands.map(nm => `${nm} ${compassOf(sqs)}`).find(nm => !used.has(nm))
+               || terrainName(sqs, pick, flavor);
+    const stem = name;
+    for (let k = 2; used.has(name); k++) name = `${stem} ${['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][Math.min(k-2, 8)]}`;
+    r.name = name; used.add(name);
   }
 }
 
@@ -1071,7 +1225,9 @@ function showInfo(){
   }
   if (sel && sel.type === 'route' && state.routes[sel.idx]){
     const r = state.routes[sel.idx], p = findPath(townById(r.a), townById(r.b));
-    box.innerHTML = `Route ${r.num ?? '???'}<small>${esc(townById(r.a).name)} ↔ ${esc(townById(r.b).name)} · ${p.squares.length} squares<br>Follows real roads: ${Math.round(p.roadFrac*100)}%${p.waterFrac > 0.5 ? ' · Sea route (Surf)' : ''}</small>`;
+    box.innerHTML = `${esc(r.name || 'Route')}<small>${esc(townById(r.a).name)} ↔ ${esc(townById(r.b).name)} · ${p.squares.length} squares<br>Follows real roads: ${Math.round(p.roadFrac*100)}%${p.waterFrac > 0.5 ? ' · Sea route (Surf)' : ''}${r.custom ? ' · your name' : ''}</small>`;
+    actionBtn('RENAME', () => { const v = prompt('Name this route:', r.name); if (v && v.trim()){ r.name = v.trim(); r.custom = true; } });
+    if (r.custom) actionBtn('AUTO NAME', () => { r.custom = false; });
     return;
   }
   if (sel && sel.type === 'cell'){
@@ -1176,6 +1332,7 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
 $('showGrid').onchange = render;
 $('showRoads').onchange = render;
 $('showRivers').onchange = render;
+$('flavorNames').onchange = () => { if (state.terrain){ nameRoutes(); render(); showInfo(); } };
 
 // ===== Forge! =====
 // ===== Loading bar =====
@@ -1193,7 +1350,7 @@ const QUIPS = {
            'Dodging Zubat in the caves…', 'Waking the Snorlax blocking the road…', 'Riding Cycling Road…',
            'Shaking Berry trees…', 'Registering Fly destinations…', 'Reading every route sign…',
            'Avoiding Youngster Joey\'s phone calls…', 'Getting lost in the tall grass…'],
-  route:  ['Numbering routes from 201…', 'Hammering in town signs…', 'Your rival is waiting at the next town…'],
+  route:  ['Naming routes after local landmarks…', 'Hammering in town signs…', 'Your rival is waiting at the next town…'],
   done:   ['Region forged!']
 };
 const prog = { pct:0, label:'', stage:'terrain', detail:'', quip:0 };
@@ -1215,7 +1372,7 @@ function endProgress(){ $('progress').style.display = 'none'; $('progressFill').
 function clearRegion(){
   Object.assign(state, { terrain:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
-    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), notes:[], timings:{} });
+    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{} });
   pathCache.clear(); $('popup').style.display = 'none';
 }
 
@@ -1275,6 +1432,7 @@ async function forge(){
 
     setProgress(92, 'route', '');
     await new Promise(r => setTimeout(r, 30));     // let the bar paint before the heavy work
+    computeNameMaps(app && app.named, landmarks);
     state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks);
     state.routes = buildRoutes(+$('extraCount').value);
     snapLandmarks();
@@ -1319,7 +1477,7 @@ function buildLayout(){
   const layout = Array.from({ length:MH }, () => Array(MW).fill(null));
   const paths = routePaths();
   state.routes.forEach((r, i) => paths[i].squares.forEach(s => {
-    if (!layout[s.y][s.x]) layout[s.y][s.x] = { mapsec:`MAPSEC_ROUTE_${r.num}`, name:`Route ${r.num}`,
+    if (!layout[s.y][s.x]) layout[s.y][s.x] = { mapsec:mapsecId(r.name || `Route ${r.num}`), name:r.name || `Route ${r.num}`,
       sub: sqKind(s.x, s.y) === 'water' ? 'Sea route' : '' };
   }));
   const kindName = t => t.kind === 'city' ? (t.size === 2 ? 'Big city' : 'City') : t.kind === 'town' ? 'Town' : 'Landmark';
@@ -1411,7 +1569,7 @@ $('jsonBtn').onclick = () => {
     towns: state.towns.map(t => { const ll = toLatLng(t.x, t.y);
       return { id:t.id, name:t.name, mapsec:mapsecId(t.name), kind:t.kind, squares:footprint(t),
                lat:+ll.lat.toFixed(5), lng:+ll.lng.toFixed(5), start:t.id === state.startId }; }),
-    routes: state.routes.map((r, i) => ({ number:r.num, mapsec:`MAPSEC_ROUTE_${r.num}`, from:r.a, to:r.b,
+    routes: state.routes.map((r, i) => ({ name:r.name, mapsec:mapsecId(r.name || `Route ${r.num}`), order:r.num, customName:!!r.custom, from:r.a, to:r.b,
       squares:paths[i].squares.length, corners:corners(paths[i].squares),
       roadFollowPct:Math.round(paths[i].roadFrac*100), seaRoute:paths[i].waterFrac > 0.5 }))
   };

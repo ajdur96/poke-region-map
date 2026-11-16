@@ -8,7 +8,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 |---|---|
 | `regionMapForge.html` | Full version. Frame a real place on a live map and forge a region from real data. Open it in a desktop browser. |
 | `demo/index.html` | Mobile demo. Generates a fictional region (no live data needed), with the same editor, cursor and pop-up. |
-| `data/ne/` | Bundled map data: roads, rivers, lakes, towns and peaks, cut into 10°×10° tiles (~11 MB for the whole world; a region loads only the tiles it touches). |
+| `data/ne/` | Bundled map data: roads (with route numbers), rivers, lakes, seas, mountain ranges and landforms, towns and peaks, cut into 10°×10° tiles (~11 MB for the whole world; a region loads only the tiles it touches). |
 | `tools/build_static_data.py` | Rebuilds `data/ne/` from the source datasets. |
 
 ## Features
@@ -18,6 +18,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 - **Towns:** Natural Earth cities (with populations) and GeoNames towns over 1,000 people, ranked and spaced out. The biggest cities take 2 squares. When the bundled towns are thin or the frame is zoomed in, OpenStreetMap is asked for villages and neighborhoods, with an 8–15 second limit.
 - **Landmarks:** bundled mountain peaks and named lakes, plus OSM parks and attractions when available.
 - **Routes:** a minimum spanning tree plus optional shortcuts. Each route is pathed with A* that prefers real roads, avoids mountains, can cross water (sea routes) and penalises turns. Numbered from Route 201 outward from the starting town.
+- **Route names:** each route is named after the most distinctive real feature it passes, in priority order: roads ("I-15 Corridor"), rivers ("Jordan River Walk"), lakes ("Utah Lake Shore"), seas and bays ("Chesapeake Bay Coast"), then mountains ("Wasatch Range Pass"). Only if none apply does it fall back to terrain, using a real landform where possible ("Great Basin Flats"). A **Pokémon-style** toggle swaps in livelier versions ("I-15 Cycling Road", "Potomac Bridge"), and any route can be renamed by hand.
 - **Emerald-style cursor:** D-pad or arrow keys, with a pop-up showing the name of the square under the cursor.
 - **Editing:** move, add, delete and link towns; paint land, water and mountains; rename, resize and rotate cities.
 - **Export:** a 4× PNG, and JSON with a 28×15 `MAPSEC_*` layout, terrain sub-grid, towns and routes.
