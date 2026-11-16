@@ -107,6 +107,10 @@
     </div>
     <div class="hint" id="toolHint"></div>
   </section>
+  <p class="hint" style="text-align:center">Data: <a href="https://www.naturalearthdata.com" style="color:inherit">Natural Earth</a> (public domain) ·
+    <a href="https://www.geonames.org" style="color:inherit">GeoNames</a> (CC BY 4.0) ·
+    © <a href="https://www.openstreetmap.org/copyright" style="color:inherit">OpenStreetMap</a> contributors ·
+    elevation: <a href="https://registry.opendata.aws/terrain-tiles/" style="color:inherit">Terrain Tiles</a></p>
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -246,7 +250,7 @@ function sampleSub(m, sx, sy, fn){
   return n ? sum/n : 0;
 }
 
-function buildTerrain(osm, dem){
+function buildTerrain(osm, dem, lakes = []){
   const terr = new Uint8Array(SW*SH).fill(T.LAND);
   const elev = dem.data ? new Float32Array(SW*SH) : null;
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
@@ -257,6 +261,7 @@ function buildTerrain(osm, dem){
     if (elev) elev[i] = sampleSub(dem, sx, sy, (r, g, b) => r*256 + g + b/256 - 32768);
     if (blue > 0.5 || (elev && elev[i] < -3)) terr[i] = T.SEA;
   }
+  if (!osm.data && lakes.length) paintLakes(terr, lakes);
   // Remove specks: flip sub-cells that disagree with 7+ of 8 neighbours
   const copy = terr.slice();
   for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
@@ -329,18 +334,96 @@ async function readJson(res, onBytes){
   for (const c of chunks){ buf.set(c, o); o += c.length; }
   return JSON.parse(new TextDecoder().decode(buf));
 }
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter',
-                  'https://overpass.private.coffee/api/interpreter'];
+// ===== Bundled map data: Natural Earth + GeoNames, pre-cut into 10° tiles (see tools/build_static_data.py) =====
+// Served from this site, so it's fast and never rate-limited. Overpass only adds extra detail on top.
+const STATIC_DIR = 'data/ne/';
+let staticIndex = null;
+function decodeLine(enc){                       // 1/1000° delta-encoded ints → [{lat, lon}]
+  const pts = []; let x = 0, y = 0;
+  for (let i = 0; i < enc.length; i += 2){ x += enc[i]; y += enc[i+1]; pts.push({ lon:x/1000, lat:y/1000 }); }
+  return pts;
+}
+async function loadStatic(b, onBytes, tracker){
+  if (!staticIndex){
+    const r = await fetch(STATIC_DIR + 'index.json');
+    if (!r.ok) throw new Error('no bundled data');
+    staticIndex = new Set(await r.json());
+  }
+  const keys = [];
+  for (let tx = Math.floor(b.w/10); tx <= Math.floor(b.e/10); tx++)
+    for (let ty = Math.floor(b.s/10); ty <= Math.floor(b.n/10); ty++)
+      if (staticIndex.has(`${tx}_${ty}`)) keys.push(`${tx}_${ty}`);
+  if (tracker) tracker.total += keys.length;
+  const tiles = await Promise.all(keys.map(k => fetch(STATIC_DIR + k + '.json')
+    .then(r => r.ok ? readJson(r, onBytes) : null)
+    .finally(() => { if (tracker){ tracker.done++; tracker.onTick(); } })));
+  const out = { roads:[], rivers:[], lakes:[], places:[], peaks:[] }, seen = new Set();
+  const m = 0.2;                                 // keep features slightly outside the frame so edges connect
+  const nearFrame = pts => pts.some(p => p.lat > b.s - m && p.lat < b.n + m && p.lon > b.w - m && p.lon < b.e + m);
+  for (const t of tiles){
+    if (!t) continue;
+    for (const layer of ['roads', 'rivers', 'lakes'])
+      for (const [id, attr, enc] of t[layer]){
+        const key = layer + id; if (seen.has(key)) continue; seen.add(key);   // a feature can sit in several tiles
+        const pts = decodeLine(enc);
+        if (nearFrame(pts)) out[layer].push({ id, attr, pts });
+      }
+    for (const [name, lat, lon, pop, cap] of t.places)
+      if (lat > b.s && lat < b.n && lon > b.w && lon < b.e) out.places.push({ name, lat, lon, pop, cap });
+    for (const [name, lat, lon, ele] of t.peaks)
+      if (lat > b.s && lat < b.n && lon > b.w && lon < b.e) out.peaks.push({ name, lat, lon, ele });
+  }
+  return out;
+}
+// Reshape bundled data into the same forms the Overpass code produced, so the rest of the app is unchanged.
+function staticToApp(st, b){
+  const { minCls } = roadTier(b);
+  const roads = st.roads.filter(r => r.attr >= minCls)
+    .map(r => ({ tags:{ highway: r.attr === 3 ? 'motorway' : r.attr === 2 ? 'trunk' : 'primary' }, geometry:r.pts }));
+  const rivers = st.rivers.map(r => ({ id:r.id, tags:{ waterway:'river', ...(r.attr ? { name:r.attr } : {}) }, geometry:r.pts }));
+  const places = st.places.map(p => ({ name:p.name, lat:p.lat, lon:p.lon, pop:p.pop, capital:p.cap,
+    place: p.pop >= 100000 ? 'city' : p.pop > 0 ? 'town' : 'village' }));   // pop 0 = GeoNames town (> 1000 people)
+  const landmarks = [
+    ...st.peaks.map(p => ({ name:p.name, lat:p.lat, lon:p.lon, score:1 + p.ele/1000, natural:true })),
+    ...st.lakes.filter(l => l.attr).map(l => {
+      const c = l.pts.reduce((a, p) => ({ lat:a.lat + p.lat/l.pts.length, lon:a.lon + p.lon/l.pts.length }), { lat:0, lon:0 });
+      return { name:l.attr, lat:c.lat, lon:c.lon, score:1.5, natural:true };
+    }).filter(l => l.lat > b.s && l.lat < b.n && l.lon > b.w && l.lon < b.e)
+  ];
+  return { roads, rivers, places, landmarks, lakes:st.lakes.map(l => l.pts) };
+}
+// Fill bundled lake outlines into the terrain (used when the OSM map tiles couldn't be read)
+function paintLakes(terr, lakes){
+  for (const poly of lakes){
+    const pts = poly.map(p => { const f = toSqF(p.lat, p.lon); return { x:f.x*SUB, y:f.y*SUB }; });
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const x0 = Math.max(0, Math.floor(Math.min(...xs))), x1 = Math.min(SW-1, Math.ceil(Math.max(...xs)));
+    const y0 = Math.max(0, Math.floor(Math.min(...ys))), y1 = Math.min(SH-1, Math.ceil(Math.max(...ys)));
+    for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++){
+      const px0 = sx + .5, py0 = sy + .5; let inside = false;          // even-odd ray cast from the cell centre
+      for (let i = 0, j = pts.length-1; i < pts.length; j = i++){
+        const a = pts[i], c = pts[j];
+        if ((a.y > py0) !== (c.y > py0) && px0 < (c.x - a.x)*(py0 - a.y)/(c.y - a.y) + a.x) inside = !inside;
+      }
+      if (inside) terr[sy*SW + sx] = T.SEA;
+    }
+  }
+}
+
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function overpass(q, onBytes){
+// Overpass is now only an optional extra, so it gets a hard deadline instead of minutes of retries.
+async function overpass(q, onBytes, deadline = Date.now() + 15000){
   for (const url of OVERPASS){
+    const left = deadline - Date.now();
+    if (left < 1500) break;
     try {
-      const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 60000);
+      const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), Math.min(12000, left));
       const res = await fetch(url, { method:'POST', signal:ctrl.signal,
         headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'data=' + encodeURIComponent(q) });
       clearTimeout(t);
       if (res.ok) return await readJson(res, onBytes);
-      if (res.status === 429 || res.status === 504) await sleep(1500);   // busy server: pause, then try the next mirror
+      if (res.status === 429 || res.status === 504) await sleep(800);    // busy server: brief pause, then the next mirror
     } catch (e) { /* try next mirror */ }
   }
   throw new Error('Overpass unavailable');
@@ -355,7 +438,7 @@ const bboxStr = b => `${b.s},${b.w},${b.n},${b.e}`;
 
 // Separate output caps per tier, so a flood of villages can never push cities out of the results,
 // and villages/hamlets are always there to fill sparse areas with real names.
-async function fetchPlaces(b, z, onBytes){
+async function fetchPlaces(b, z, onBytes, deadline){
   const bb = bboxStr(b);
   // Zoomed in (frame under 60 km wide) there may be only one or two towns, so neighborhoods
   // (suburbs, quarters, neighbourhoods) join in as stand-ins. Skipped on wide frames to save download.
@@ -365,14 +448,14 @@ async function fetchPlaces(b, z, onBytes){
   const json = await overpass(`[out:json][timeout:40];
     node["place"="city"]["name"](${bb})->.c;  node["place"="town"]["name"](${bb})->.t;
     node["place"="village"]["name"](${bb})->.v; node["place"="hamlet"]["name"](${bb})->.h;
-    .c out body 300; .t out body 600; .v out body 400; .h out body 200; ${hoods}`, onBytes);
+    .c out body 300; .t out body 600; .v out body 400; .h out body 200; ${hoods}`, onBytes, deadline);
   return json.elements.map(e => ({ name:e.tags['name:en'] || e.tags.name, lat:e.lat, lon:e.lon, place:e.tags.place,
     pop: parseInt(String(e.tags.population || '').replace(/[^0-9]/g, '')) || 0, capital:e.tags.capital }));
 }
 
 // Real landmarks: notable peaks, lakes, parks, attractions, historic sites, lighthouses.
 // "wikidata" acts as a notability filter so we get Mt. Timpanogos, not every unnamed bump.
-async function fetchLandmarks(b, onBytes){
+async function fetchLandmarks(b, onBytes, deadline){
   const bb = bboxStr(b);
   const json = await overpass(`[out:json][timeout:40];(
     node["natural"~"^(peak|volcano)$"]["name"]["wikidata"](${bb});
@@ -383,7 +466,7 @@ async function fetchLandmarks(b, onBytes){
     nwr["historic"]["name"]["wikidata"](${bb});
     nwr["man_made"="lighthouse"]["name"](${bb});
     nwr["natural"~"^(cave_entrance|glacier|bay|cape|beach|arch)$"]["name"]["wikidata"](${bb});
-  );out center tags 400;`, onBytes);
+  );out center tags 400;`, onBytes, deadline);
   return json.elements.map(e => {
     const t = e.tags, lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
     let score = 1, natural = false;
@@ -404,12 +487,6 @@ async function timed(name, fn, onBytes){
   try { return await fn(n => { rec.mb += n/1048576; onBytes(n); }); }
   finally { rec.s = (Date.now() - t0)/1000; }
 }
-async function placesAndLandmarks(b, z, onBytes){
-  const places = await timed('towns', ob => fetchPlaces(b, z, ob), onBytes);      // sequential: be kind to Overpass
-  let landmarks = [];
-  try { landmarks = await timed('landmarks', ob => fetchLandmarks(b, ob), onBytes); } catch (e) { state.notes.push('Landmark lookup failed.'); }
-  return { places, landmarks };
-}
 
 // Road detail by frame width. One grid square ≈ width/28, so at 150 km a square is ~5 km:
 // primary roads are finer than the grid can show, yet they're most of the download.
@@ -417,9 +494,10 @@ async function placesAndLandmarks(b, z, onBytes){
 // kilometres across, so smaller roads add wait time without changing the map much.
 function roadTier(b){
   const w = frameKm(b).w;
-  if (w >= 150) return { cls:'motorway', riverFilter:'["name"]', label:'motorways only' };
-  if (w >= 50)  return { cls:'motorway|trunk', riverFilter:'["name"]', label:'motorways + trunk roads' };
-  return { cls:'motorway|trunk|primary', riverFilter:'', label:'motorways + trunk + primary roads' };
+  // minCls: Natural Earth road class to keep (3 = expressway/major, 2 = secondary highway, 1 = other)
+  if (w >= 150) return { minCls:3, cls:'motorway', riverFilter:'["name"]', label:'major highways' };
+  if (w >= 50)  return { minCls:2, cls:'motorway|trunk', riverFilter:'["name"]', label:'major + secondary highways' };
+  return { minCls:1, cls:'motorway|trunk|primary', riverFilter:'', label:'all mapped roads' };
 }
 async function fetchWays(b, z, withRivers, onBytes){
   const { cls, riverFilter } = roadTier(b);
@@ -429,10 +507,6 @@ async function fetchWays(b, z, withRivers, onBytes){
     : `[out:json][timeout:50];way["highway"~"^(${cls})$"](${bb});out geom;`;
   const ways = (await overpass(q, onBytes)).elements.filter(e => e.geometry && e.tags);
   return { roads:ways.filter(w => w.tags.highway), rivers:ways.filter(w => w.tags.waterway === 'river'), withRivers };
-}
-async function getWays(b, z, onBytes){
-  try { return await fetchWays(b, z, true, onBytes); }
-  catch (e) { return await fetchWays(b, z, false, onBytes); }   // rivers made it too heavy? keep the roads at least
 }
 
 // Rivers: drawn as thin lines on the terrain sub-grid. Short, unnamed streams are skipped to avoid clutter.
@@ -1066,38 +1140,51 @@ async function forge(){
     state.seed = Math.floor(Math.random()*1e6); state.nextId = 1;
     setProgress(2, 'terrain', '');
 
-    const tiles = { done:0, total:0, onTick(){ setProgress(2 + 33*this.done/Math.max(1, this.total), null, `${this.done}/${this.total} tiles`); } };
-    const [osm, dem] = await Promise.all([
+    const tiles = { done:0, total:0, onTick(){ setProgress(2 + 43*this.done/Math.max(1, this.total), null, `${this.done}/${this.total} tiles`); } };
+    let bytes = 0; const onBytes = n => { bytes += n; };
+    const [osm, dem, stat] = await Promise.all([
       fetchMosaic(b, (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, 600, 1600, 16, tiles),
-      fetchMosaic(b, (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`, 300, 900, 13, tiles)
+      fetchMosaic(b, (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`, 300, 900, 13, tiles),
+      timed('map data', ob => loadStatic(b, ob, tiles), onBytes).catch(() => null)
     ]);
-    if (!osm.data) state.notes.push('Couldn\'t read water from map tiles.');
     if (!dem.data) state.notes.push('Elevation unavailable — no mountains.');
     state.gen = { z:osm.z, p1:osm.p1, pw:osm.pw, ph:osm.ph, b };
-    buildTerrain(osm, dem);
+    const app = stat ? staticToApp(stat, b) : null;
+    if (!osm.data) state.notes.push(app ? 'Map tiles unreadable — lakes from bundled data.' : 'Couldn\'t read water from map tiles.');
+    buildTerrain(osm, dem, app ? app.lakes : []);
     render();                                      // show the new terrain while towns load
 
-    let bytes = 0; const t0 = Date.now();
-    const km = frameKm(b), tier = roadTier(b);
-    const stageLabel = () => `${Math.round(km.w)}×${Math.round(km.h)} km, ${tier.label} · ${(bytes/1048576).toFixed(1)} MB · ${Math.round((Date.now()-t0)/1000)} s`;
-    const onBytes = n => { bytes += n; };
-    setProgress(35, 'scout', stageLabel());
-    ticker = setInterval(() => {
-      const secs = (Date.now() - t0)/1000;
-      setProgress(35 + 57*(1 - Math.exp(-secs/15)), null, stageLabel());
-    }, 250);
-    const [placesR, waysR] = await Promise.allSettled([placesAndLandmarks(b, osm.z, onBytes), timed('roads & rivers', ob => getWays(b, osm.z, ob), onBytes)]);
-    clearInterval(ticker); ticker = null;
+    // Roads and rivers come straight from the bundled data: no waiting on Overpass.
+    let places = [], landmarks = [];
+    if (app){
+      ingestRoads(app.roads); ingestRivers(app.rivers);
+      places = app.places; landmarks = app.landmarks;
+    } else state.notes.push('Bundled data unavailable (open the site over http, not as a file) — using Overpass only.');
+
+    // Optional extras from OpenStreetMap: villages, neighborhoods and more landmarks.
+    // Only asked for when the bundled towns are thin or the frame is zoomed in, with a hard time limit.
+    const count = +$('townCount').value, km = frameKm(b), tier = roadTier(b);
+    const wantExtras = !app || places.length < count*2 || km.w < 60;
+    if (wantExtras){
+      // 8 s when the bundled data already has enough towns (extras are a bonus), 15 s when they're needed
+      const t0 = Date.now(), deadline = t0 + (!app ? 30000 : places.length >= count ? 8000 : 15000);
+      const stageLabel = () => `${Math.round(km.w)}×${Math.round(km.h)} km, ${tier.label} · ${(bytes/1048576).toFixed(1)} MB · ${Math.round((Date.now()-t0)/1000)} s`;
+      setProgress(45, 'scout', stageLabel());
+      ticker = setInterval(() => setProgress(45 + 47*Math.min(1, (Date.now()-t0)/(deadline-t0)), null, stageLabel()), 250);
+      const tasks = [timed('OSM towns', ob => fetchPlaces(b, osm.z, ob, deadline), onBytes),
+                     timed('OSM landmarks', ob => fetchLandmarks(b, ob, deadline), onBytes)];
+      if (!app) tasks.push(timed('OSM roads & rivers', ob => fetchWays(b, osm.z, true, ob), onBytes));
+      const [pR, lR, wR] = await Promise.allSettled(tasks);
+      clearInterval(ticker); ticker = null;
+      if (pR.status === 'fulfilled') places = places.concat(pR.value);
+      if (lR.status === 'fulfilled') landmarks = landmarks.concat(lR.value);
+      if (wR && wR.status === 'fulfilled'){ ingestRoads(wR.value.roads); ingestRivers(wR.value.rivers); }
+      if (pR.status !== 'fulfilled' && lR.status !== 'fulfilled')
+        state.notes.push(app ? 'OpenStreetMap was busy — used bundled towns only.' : 'Town and road lookups failed.');
+    }
 
     setProgress(92, 'route', '');
     await new Promise(r => setTimeout(r, 30));     // let the bar paint before the heavy work
-    if (waysR.status === 'fulfilled'){
-      ingestRoads(waysR.value.roads);
-      if (waysR.value.withRivers) ingestRivers(waysR.value.rivers); else state.notes.push('Rivers too heavy for this area — try zooming in.');
-    } else { state.roadSq = new Float32Array(MW*MH); state.roadEdges = new Set(); state.notes.push('Road & river lookup failed — routes follow terrain only.'); }
-    const { places, landmarks } = placesR.status === 'fulfilled' ? placesR.value : { places:[], landmarks:[] };
-    if (placesR.status !== 'fulfilled') state.notes.push('Town lookup failed — towns placed procedurally.');
-
     state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks);
     state.routes = buildRoutes(+$('extraCount').value);
     snapLandmarks();
