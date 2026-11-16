@@ -40,6 +40,22 @@
   @media (prefers-reduced-motion: reduce){.progress .fill{animation:none}}
   #status{font-size:12px;min-height:1.2em;color:#ffe;opacity:.85;margin-top:6px}
   .ds{position:relative;background:#000;padding:8px;border-radius:8px;border:3px solid #586898}
+  .titlebar{display:flex;align-items:center;justify-content:space-between;gap:8px;background:linear-gradient(#5868a8,#3c4880);
+    border:3px solid #000;border-bottom:none;border-radius:8px 8px 0 0;padding:7px 10px;color:#fff;font-size:11px;letter-spacing:2px;text-shadow:2px 2px 0 #000;cursor:pointer}
+  .titlebar small{font-family:system-ui,sans-serif;font-size:11px;letter-spacing:0;opacity:.75;text-shadow:none}
+  .titlebar + .ds{border-radius:0 0 8px 8px}
+  details.list{margin-top:12px;background:#1e2848;border:2px solid var(--edge);border-radius:8px;padding:6px 10px}
+  details.list summary{cursor:pointer;font-size:9px;padding:6px 0}
+  .list table{width:100%;border-collapse:collapse;font-size:13px}
+  .list td{padding:5px 4px;border-top:1px solid #2e3a66;vertical-align:middle}
+  .list tr.item{cursor:pointer}
+  .list tr.item:hover, .list tr.sel{background:#2e3a66}
+  .list .k{width:18px;text-align:center}
+  .list .ed{width:34px;text-align:right}
+  .list .ed button{font-size:8px;padding:4px 6px}
+  .list h4{font-size:8px;margin:10px 0 2px;color:#b8c4f0}
+  #shareOut{width:100%;margin-top:6px;font-size:12px;display:none}
+  .leaflet-overlay-pane canvas.townOverlay{image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none;transform-origin:0 0;position:absolute;left:0;top:0}
   .popup{position:absolute;top:14px;left:14px;max-width:62%;display:none;pointer-events:none;
     background:#f8f8f8;color:#303848;border:3px solid #485878;outline:2px solid #f8f8f8;border-radius:4px;
     box-shadow:inset 0 -3px 0 #c8d0e0, 0 2px 0 #0006;padding:7px 9px 8px;font-size:9px;line-height:1.3;text-transform:uppercase}
@@ -80,6 +96,10 @@
       <button id="kmSet">SET</button>
     </div>
     <div class="hint" id="scaleInfo" style="margin-top:0"></div>
+    <div class="row">
+      <label><input type="checkbox" id="overlayOn"> Show town map on the real map</label>
+      <input type="range" id="overlayOpacity" min="10" max="100" value="60" title="Overlay opacity" style="max-width:140px">
+    </div>
     <div class="row">Towns <input type="range" id="townCount" min="3" max="16" value="10"><output id="townOut">10</output></div>
     <div class="row">Extra routes <input type="range" id="extraCount" min="0" max="6" value="2"><output id="extraOut">2</output></div>
     <div class="row"><label><input type="checkbox" id="landmarks" checked> Blue landmarks along routes</label></div>
@@ -90,6 +110,7 @@
 
   <section class="card" id="townMapCard">
     <div class="label pixel">2 · TOWN MAP</div>
+    <div class="titlebar pixel" id="titleBar" title="Tap to rename the region"><span id="regionTitle">REGION</span><small>✎ rename</small></div>
     <div class="ds"><canvas id="region" width="224" height="120"></canvas><div class="popup pixel" id="popup"></div></div>
     <div class="dpad">
       <span></span><button data-move="0,-1">▲</button><span></span>
@@ -131,6 +152,11 @@
       <button id="jsonBtn">EXPORT JSON</button>
     </div>
     <div class="hint" id="toolHint"></div>
+    <div class="actions">
+      <button id="shareBtn" title="Copy a link that rebuilds this region">🔗 SHARE LINK</button>
+    </div>
+    <input type="text" id="shareOut" readonly>
+    <details class="list" id="listPanel"><summary class="pixel" id="listSummary">TOWNS &amp; ROUTES</summary><div id="listBody"></div></details>
   </section>
   <p class="hint" style="text-align:center">Data: <a href="https://www.naturalearthdata.com" style="color:inherit">Natural Earth</a> (public domain) ·
     <a href="https://www.geonames.org" style="color:inherit">GeoNames</a> (CC BY 4.0) ·
@@ -246,9 +272,9 @@ function frameBounds(){
   const pt = (u, v) => { const x = (u-.5)*fw, y = (v-.5)*fh; return L.point(W/2 + x*c - y*sn, H/2 + x*sn + y*c); };
   const [tl, tr, bl, br] = [pt(0,0), pt(1,0), pt(0,1), pt(1,1)].map(p => map.containerPointToLatLng(p));
   const lats = [tl, tr, bl, br].map(p => p.lat), lngs = [tl, tr, bl, br].map(p => p.lng);
-  const k = currentKps();
+  const k = currentKps(), mid = map.containerPointToLatLng(L.point(W/2, H/2));   // exact centre (≠ corner average in Mercator)
   return { n:Math.max(...lats), s:Math.min(...lats), e:Math.max(...lngs), w:Math.min(...lngs),
-           corners:{ tl, tr, bl, br }, rot, kmPerSquare:+k.toFixed(4), wKm:k*MW, hKm:k*MH };
+           corners:{ tl, tr, bl, br }, center:{ lat:mid.lat, lng:mid.lng }, rot, kmPerSquare:+k.toFixed(6), wKm:k*MW, hKm:k*MH };
 }
 
 // ===== Helpers =====
@@ -1225,6 +1251,7 @@ function render(){
   if (state.sel && state.sel.type === 'cell') bracket({ x0:state.sel.x*TILE, y0:state.sel.y*TILE, w:8, h:8 });
   drawNorth();
   drawCursor();
+  updateOverlay();
 }
 // Small north arrow in the corner whenever the frame was rotated
 function drawNorth(){
@@ -1247,7 +1274,7 @@ function actionBtn(label, fn){
 }
 const elevText = (x, y) => state.elev ? ` · ${Math.round(state.sqElev[y*MW+x])} m` : '';
 function showInfo(){
-  scheduleSave(); updateUndoButtons();
+  scheduleSave(); updateUndoButtons(); updateTitle(); renderList();
   const box = $('infoBox'); $('infoActions').innerHTML = '';
   updatePopup();
   $('toolHint').textContent = TOOL_HINTS[state.tool];
@@ -1436,11 +1463,12 @@ function endProgress(){ $('progress').style.display = 'none'; $('progressFill').
 function clearRegion(){
   Object.assign(state, { terrain:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
-    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{}, source:null, variant:0 });
+    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{}, source:null, variant:0,
+    regionName:'', regionNameCustom:false });
   pathCache.clear(); $('popup').style.display = 'none';
 }
 
-async function forge(){
+async function forge(opts = {}){
   const btn = $('forgeBtn'); btn.disabled = true;
   let ticker = null, quipTimer = null;
   try {
@@ -1449,7 +1477,7 @@ async function forge(){
     clearRegion();
     state.forging = true; prog.pct = 0; prog.stage = ''; prog.detail = '';
     quipTimer = setInterval(() => { prog.quip++; setProgress(prog.pct); }, 2500);
-    state.seed = Math.floor(Math.random()*1e6); state.nextId = 1;
+    state.seed = opts.seed ?? Math.floor(Math.random()*1e6); state.nextId = 1;
     setProgress(2, 'terrain', '');
 
     const tiles = { done:0, total:0, onTick(){ setProgress(2 + 43*this.done/Math.max(1, this.total), null, `${this.done}/${this.total} tiles`); } };
@@ -1498,11 +1526,12 @@ async function forge(){
     setProgress(92, 'route', '');
     await new Promise(r => setTimeout(r, 30));     // let the bar paint before the heavy work
     computeNameMaps(app && app.named, landmarks);
-    state.source = { places, landmarks }; state.variant = 0;     // kept so REROLL needs no new downloads
-    state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks);
+    state.source = { places, landmarks }; state.variant = opts.variant || 0;     // kept so REROLL needs no new downloads
+    state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks, { variant:state.variant });
     state.routes = buildRoutes(+$('extraCount').value);
     snapLandmarks();
     renumber();
+    if (opts.regionName){ state.regionName = opts.regionName; state.regionNameCustom = true; } else suggestRegionName();
     const st = townById(state.startId); state.cursor = st ? { x:st.x, y:st.y } : { x:0, y:0 };
     clearInterval(quipTimer); quipTimer = null;
     setProgress(100, 'done', '');
@@ -1557,6 +1586,133 @@ $('rerollBtn').onclick = () => {
   setStatus(`Layout #${state.variant}${locked.length ? ` · kept ${locked.length} locked` : ''}.`);
 };
 
+// ===== Region title bar =====
+// Suggests a one-word-ish name from the region's most prominent named feature: a mountain range,
+// then a sea or bay, then a landform, then the biggest city. "Wasatch Range" → "WASATCH".
+const GENERIC = /\b(range|mountains?|mts?\.?|bay|sea|gulf|sound|strait|channel|lake|reservoir|plateau|basin|desert|plain|plains|coastal|coast|valley|hills|great|the|of)\b/gi;
+function shortName(n){ const s = n.replace(GENERIC, ' ').replace(/\s+/g, ' ').trim(); return s || n; }
+function suggestRegionName(){
+  if (state.regionNameCustom) return;
+  const N = state.names, tally = map => { const c = {}; for (const v of map.values()){ const k = typeof v === 'string' ? v : v.name; c[k] = (c[k]||0) + 1; }
+    return Object.entries(c).sort((a, b) => b[1] - a[1])[0]; };
+  let pick = null;
+  if (N){
+    const r = tally(N.range), w = tally(N.sea), l = tally(N.land);
+    if (r && r[1] >= 8) pick = r[0]; else if (w && w[1] >= 8) pick = w[0]; else if (l && l[1] >= 30) pick = l[0];
+  }
+  if (!pick){ const big = state.towns.filter(t => t.kind !== 'landmark').sort((a, b) => (b.score||0) - (a.score||0))[0]; pick = big ? big.name : 'New'; }
+  state.regionName = shortName(pick.replace(/,.*$/, ''));
+}
+function updateTitle(){
+  $('regionTitle').textContent = state.terrain ? (state.regionName || 'REGION').toUpperCase() : 'REGION MAP';
+}
+$('titleBar').onclick = () => {
+  if (!state.terrain) return;
+  const v = prompt('Name this region (leave empty for an automatic name):', state.regionName);
+  if (v === null) return;
+  pushUndo();
+  if (v.trim()){ state.regionName = v.trim(); state.regionNameCustom = true; } else { state.regionNameCustom = false; suggestRegionName(); }
+  showInfo();
+};
+
+// ===== Towns & routes list =====
+function renderList(){
+  const body = $('listBody');
+  if (!state.terrain){ body.innerHTML = ''; $('listSummary').textContent = 'TOWNS & ROUTES'; return; }
+  const towns = state.towns.filter(t => t.kind !== 'landmark').sort((a, b) => (b.kind === 'city') - (a.kind === 'city') || (b.score||0) - (a.score||0));
+  const lms = state.towns.filter(t => t.kind === 'landmark');
+  const order = state.routes.map((r, i) => i).sort((a, b) => (state.routes[a].num ?? 1e9) - (state.routes[b].num ?? 1e9));
+  $('listSummary').textContent = `TOWNS & ROUTES (${towns.length} · ${state.routes.length})`;
+  const icon = t => t.kind === 'city' ? '🔴' : t.kind === 'town' ? '🟥' : '🔷';
+  const isSel = (type, id) => state.sel && state.sel.type === type && (type === 'town' ? state.sel.id === id : state.sel.idx === id);
+  const row = (type, id, k, name, sub) => `<tr class="item${isSel(type, id) ? ' sel' : ''}" data-type="${type}" data-id="${id}">
+      <td class="k">${k}</td><td>${esc(name)}<br><span style="opacity:.6;font-size:11px">${sub}</span></td>
+      <td class="ed"><button data-edit="1" title="Rename">✎</button></td></tr>`;
+  body.innerHTML =
+    `<h4 class="pixel">TOWNS</h4><table>${towns.map(t => row('town', t.id, icon(t),
+       t.name, `${t.kind === 'city' ? (t.size === 2 ? 'Big city' : 'City') : 'Town'}${t.id === state.startId ? ' · Start' : ''}${t.locked ? ' · 🔒' : ''}`)).join('')}</table>` +
+    (lms.length ? `<h4 class="pixel">LANDMARKS</h4><table>${lms.map(t => row('town', t.id, icon(t), t.name, t.locked ? '🔒 Locked' : 'Landmark')).join('')}</table>` : '') +
+    `<h4 class="pixel">ROUTES</h4><table>${order.map(i => { const r = state.routes[i];
+       return row('route', i, '〰', r.name || 'Route', `${esc(townById(r.a)?.name || '?')} ↔ ${esc(townById(r.b)?.name || '?')}${r.custom ? ' · your name' : ''}`); }).join('')}</table>`;
+}
+$('listBody').addEventListener('click', e => {
+  const tr = e.target.closest('tr.item'); if (!tr) return;
+  const type = tr.dataset.type, id = +tr.dataset.id;
+  if (e.target.closest('[data-edit]')){                        // rename in place
+    const cur = type === 'town' ? townById(id) : state.routes[id];
+    const v = prompt(type === 'town' ? 'Rename this place:' : 'Rename this route:', cur.name);
+    if (!v || !v.trim()) return;
+    pushUndo(); cur.name = v.trim(); if (type === 'route') cur.custom = true;
+    renumber(); render(); showInfo(); return;
+  }
+  if (type === 'town'){ const t = townById(id); state.sel = { type:'town', id }; state.cursor = { x:t.x, y:t.y }; }
+  else { const sq = routePaths()[id].squares; state.sel = { type:'route', idx:id }; state.cursor = { ...sq[Math.floor(sq.length/2)] }; }
+  cursorOn = true; render(); showInfo();
+  $('region').scrollIntoView({ behavior:'smooth', block:'nearest' });
+});
+
+// ===== Real-map overlay =====
+// The town map drawn on the Leaflet map over its true footprint (rotation included), so you can check
+// it against the real geography. A canvas in Leaflet's overlay pane, re-positioned whenever the map moves.
+const ovCanvas = document.createElement('canvas'); ovCanvas.width = cv.width; ovCanvas.height = cv.height;
+ovCanvas.className = 'townOverlay leaflet-zoom-hide';
+const ovCtx = ovCanvas.getContext('2d');
+let overlayAdded = false;
+function placeOverlay(){
+  if (!overlayAdded || !state.gen?.b.corners) return;
+  const c = state.gen.b.corners, tl = map.latLngToLayerPoint(c.tl), tr = map.latLngToLayerPoint(c.tr), bl = map.latLngToLayerPoint(c.bl);
+  const w = Math.hypot(tr.x - tl.x, tr.y - tl.y), h = Math.hypot(bl.x - tl.x, bl.y - tl.y), ang = Math.atan2(tr.y - tl.y, tr.x - tl.x);
+  Object.assign(ovCanvas.style, { width:w + 'px', height:h + 'px', transform:`translate(${tl.x}px, ${tl.y}px) rotate(${ang}rad)` });
+}
+function updateOverlay(){
+  const want = $('overlayOn').checked && !!state.terrain && !state.forging;
+  if (want && !overlayAdded){ map.getPanes().overlayPane.appendChild(ovCanvas); overlayAdded = true; placeOverlay(); }
+  if (!want && overlayAdded){ ovCanvas.remove(); overlayAdded = false; }
+  if (!overlayAdded) return;
+  ovCanvas.style.opacity = (+$('overlayOpacity').value)/100;
+  ovCtx.clearRect(0, 0, ovCanvas.width, ovCanvas.height); ovCtx.drawImage(cv, 0, 0);
+}
+map.on('zoomend moveend viewreset resize', placeOverlay);
+$('overlayOn').onchange = () => { updateOverlay(); placeOverlay(); };
+$('overlayOpacity').oninput = updateOverlay;
+
+// ===== Share links =====
+// The link carries the frame (centre, km per square, rotation), the seed, the layout number and the
+// generation settings. Opening it re-forges the same region. Hand edits travel by JSON file instead.
+function shareUrl(){
+  const b = state.gen.b, c = b.corners, ctr = b.center || { lat:(c.tl.lat + c.br.lat)/2, lng:(c.tl.lng + c.br.lng)/2 };
+  const q = new URLSearchParams({ lat:ctr.lat.toFixed(6), lng:ctr.lng.toFixed(6), kps:String(+b.kmPerSquare), rot:String(b.rot || 0),
+    seed:String(state.seed), layout:String(state.variant || 0), towns:$('townCount').value, extra:$('extraCount').value,
+    lm:$('landmarks').checked ? '1' : '0', bendy:$('bendy').value, style:$('flavorNames').checked ? '1' : '0' });
+  if (state.regionNameCustom) q.set('name', state.regionName);
+  return location.href.split('#')[0] + '#' + q.toString();
+}
+$('shareBtn').onclick = async () => {
+  if (!state.terrain){ setStatus('Forge a region first, then share it.'); return; }
+  const url = shareUrl(), out = $('shareOut');
+  out.value = url; out.style.display = 'block'; out.select();
+  const edited = state.towns.some(t => t.locked) || state.routes.some(r => r.custom);
+  try { await navigator.clipboard.writeText(url); setStatus('Link copied!' + (edited ? ' (Hand edits aren\'t in links: use EXPORT JSON to share those.)' : '')); }
+  catch (e) { setStatus('Copy the link below.' + (edited ? ' Hand edits aren\'t in links: use EXPORT JSON for those.' : '')); }
+};
+// Opening a share link: point the map at the frame, apply the settings, and forge with the same seed + layout
+function openShareLink(){
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (!q.has('lat') || !q.has('lng') || !q.has('kps')) return false;
+  const num = (k, d) => { const v = parseFloat(q.get(k)); return isFinite(v) ? v : d; };
+  const setSlider = (id, v) => { if (v == null) return; $(id).value = v; const o = $(id.replace('Count', 'Out')); if (o && o !== $(id)) o.textContent = v; };
+  setSlider('townCount', q.get('towns')); setSlider('extraCount', q.get('extra'));
+  if (q.has('lm')) $('landmarks').checked = q.get('lm') === '1';
+  if (q.has('bendy')){ $('bendy').value = q.get('bendy'); setBendyLabel(); }
+  if (q.has('style')) $('flavorNames').checked = q.get('style') === '1';
+  rot = ((num('rot', 0) % 360) + 360) % 360; $('rotOut').textContent = rot + '°'; placeFrame();
+  map.setView([num('lat', 0), num('lng', 0)], map.getZoom(), { animate:false });
+  setKps(num('kps', 5));
+  setStatus('Opening a shared region…');
+  forge({ seed:Math.round(num('seed', 0)), variant:Math.round(num('layout', 0)), regionName:q.get('name') || '' });
+  return true;
+}
+
 // ===== Snapshots: undo/redo, auto-save, import =====
 // An undo step copies only what edits can change (terrain, towns, routes, a few settings); the heavy
 // read-only data (elevation, roads, rivers, name maps) is shared by reference, so 50 steps cost little.
@@ -1566,6 +1722,7 @@ function takeSnap(over = {}){
   return {
     terrain:state.terrain.slice(), towns:structuredClone(state.towns), routes:structuredClone(state.routes),
     startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant,
+    regionName:state.regionName, regionNameCustom:state.regionNameCustom,
     flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
     shared:{ elev:state.elev, river:state.river, riverNames:state.riverNames, roadSq:state.roadSq, roadEdges:state.roadEdges,
              roadEdgeName:state.roadEdgeName, names:state.names, gen:state.gen, notes:state.notes, timings:state.timings, source:state.source }
@@ -1574,7 +1731,9 @@ function takeSnap(over = {}){
 function applySnap(sn){
   Object.assign(state, sn.shared);
   Object.assign(state, { terrain:sn.terrain.slice(), towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
-    startId:sn.startId, nextId:sn.nextId, seed:sn.seed, variant:sn.variant || 0, sel:null, linkFrom:null });
+    startId:sn.startId, nextId:sn.nextId, seed:sn.seed, variant:sn.variant || 0, sel:null, linkFrom:null,
+    regionName:sn.regionName || '', regionNameCustom:!!sn.regionNameCustom });
+  if (!state.regionName) suggestRegionName();
   $('flavorNames').checked = sn.flavor; $('bendy').value = sn.bendy; setBendyLabel();
   derive();                                          // rebuilds lakes + square summaries, clears the path cache
   renumber();
@@ -1618,6 +1777,7 @@ function serialize(){
     gen:{ z:g.z, o:g.o, ex:g.ex, ey:g.ey, det:g.det, b:{ ...g.b, corners:{ tl:ll(c.tl), tr:ll(c.tr), bl:ll(c.bl), br:ll(c.br) } } },
     towns:state.towns, routes:state.routes.map(r => ({ a:r.a, b:r.b, name:r.name, custom:!!r.custom })),
     startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant || 0, notes:state.notes,
+    regionName:state.regionName, regionNameCustom:!!state.regionNameCustom,
     source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '']),
                             landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '']) } : null,
     ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value,
@@ -1628,6 +1788,7 @@ function deserialize(o){
   const n = o.names;
   return {
     terrain:fromB64(o.terrain), towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
+    regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
     flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
     shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
       roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(MW*MH), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []),
@@ -1657,7 +1818,7 @@ function fromLegacyExport(o){
   const start = o.towns.find(t => t.start);
   return {
     terrain, towns, routes:(o.routes || []).map(r => ({ a:r.from, b:r.to, name:r.name, custom:!!r.customName })),
-    startId:start ? start.id : null, nextId:Math.max(0, ...towns.map(t => t.id)) + 1, seed:0, flavor:false, bendy:50,
+    startId:start ? start.id : null, nextId:Math.max(0, ...towns.map(t => t.id)) + 1, seed:0, flavor:false, bendy:50, regionName:o.regionName || '',
     shared:{ elev:null, river, riverNames:new Map(), roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(),
              names:null, gen, notes:['Imported from an older export: elevation, roads and feature names weren\'t saved in it.'], timings:{}, source:null }
   };
@@ -1666,7 +1827,7 @@ function fromLegacyExport(o){
 // Point the live map + frame at a restored region, so FORGE / overlay line up with it again
 function viewRegion(gen){
   const c = gen.b.corners; if (!c) return;
-  const lat = (c.tl.lat + c.br.lat)/2, lng = (c.tl.lng + c.br.lng)/2;
+  const { lat, lng } = gen.b.center || { lat:(c.tl.lat + c.br.lat)/2, lng:(c.tl.lng + c.br.lng)/2 };
   rot = gen.b.rot || 0; $('rotOut').textContent = rot + '°'; placeFrame();
   map.setView([lat, lng], map.getZoom(), { animate:false });
   if (gen.b.kmPerSquare) setKps(gen.b.kmPerSquare);
@@ -1815,7 +1976,7 @@ $('jsonBtn').onclick = () => {
     terrain.push(row);
   }
   const out = {
-    format:'regionMapForge/v2',
+    format:'regionMapForge/v2', regionName:state.regionName,
     emerald:{ width:MW, height:MH, tilePx:TILE, layout },
     terrainLegend:{ '~':'sea', 'o':'lake', 'r':'river', '.':'land', 'h':'hills', '^':'mountain', 'A':'peak' },
     terrainSubGrid:{ width:SW, height:SH, rows:terrain },
@@ -1836,7 +1997,7 @@ $('townCount').oninput = e => $('townOut').textContent = e.target.value;
 $('extraCount').oninput = e => $('extraOut').textContent = e.target.value;
 document.fonts && document.fonts.ready.then(() => { if (!state.terrain) render(); });
 render(); showInfo();
-restoreSaved();
+if (!openShareLink()) restoreSaved();
 </script>
 </body>
 </html>
