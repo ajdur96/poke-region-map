@@ -92,6 +92,10 @@
       <button data-tool="sea">WATER</button>
       <button data-tool="mountain">MOUNTAIN</button>
     </div>
+    <div class="row">Routes: straight
+      <input type="range" id="bendy" min="0" max="100" value="50">
+      bendy <output id="bendyOut" style="width:auto;font-size:8px">BALANCED</output>
+    </div>
     <div class="actions"><button id="rerouteBtn">RE-ROUTE</button></div>
     <div class="hint" id="toolHint"></div>
   </section>
@@ -117,6 +121,18 @@ const PAL = {
   lOut:'#203088', lFill:'#4868d8', lHi:'#a0b8ff'
 };
 const KIND_COST = { land:1, hill:1.6, mountain:5, water:2.5 };
+// ===== Route style: one slider from straight (0) to bendy (100); 50 = the original balance =====
+// Straight: turns are expensive and roads matter less, so routes run in long straight lines.
+// Bendy: turns are cheap, roads pull harder, and a gentle random "wander" cost makes routes meander.
+function routeStyle(){
+  const t = (+document.getElementById('bendy').value)/100, lerp = (a, b, u) => a + (b - a)*u;
+  const lo = t < 0.5, u = lo ? t/0.5 : (t - 0.5)/0.5;
+  return { turn: lo ? lerp(2.5, 0.8, u) : lerp(0.8, 0.05, u),       // cost added per turn
+           road: lo ? lerp(0.6, 0.3, u) : lerp(0.3, 0.15, u),       // cost multiplier on a real-road step
+           wander: lo ? 0 : u*2.6, t };                            // extra per-square cost from smooth noise
+}
+const wanderAt = (x, y) => 0.6*hash((x >> 1) + 911, (y >> 1) + 377) + 0.4*hash(x + 53, y + 97);
+
 const TOOL_HINTS = {
   inspect:'Tap anything to inspect it. Drag a town to move it — routes re-path around terrain.',
   add:'Tap an empty square to found a new town (auto-linked to its nearest neighbour).',
@@ -496,7 +512,8 @@ class MinHeap {
 const pathCache = new Map();
 function findPath(a, b){
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
-  const key = `${a.x},${a.y}>${b.x},${b.y}|${state.ver}|${townKey}`;
+  const st = routeStyle();
+  const key = `${a.x},${a.y}>${b.x},${b.y}|${state.ver}|${townKey}|${st.t}`;
   if (pathCache.has(key)) return pathCache.get(key);
 
   const occupied = new Set(state.towns.filter(t => t.kind !== 'landmark' && t !== a && t !== b).flatMap(t => footprint(t).map(f => f.y*MW + f.x)));
@@ -514,11 +531,12 @@ function findPath(a, b){
       const nx = x+DX[nd], ny = y+DY[nd]; if (!inSq(nx, ny)) continue;
       const nsq = ny*MW + nx;
       let c = KIND_COST[state.sq[nsq]];
-      if (state.roadEdges.has(edgeKey(sq, nsq))) c *= 0.3;
+      if (st.wander) c += st.wander*wanderAt(nx, ny);
+      if (state.roadEdges.has(edgeKey(sq, nsq))) c *= st.road;
       if (occupied.has(nsq)) c += 6;
-      if (d !== 4 && d !== nd) c += 0.8;
+      if (d !== 4 && d !== nd) c += st.turn;
       const ns = nsq*5 + nd, ng = g[s] + c;
-      if (ng < g[ns]){ g[ns] = ng; prev[ns] = s; heap.push(ns, ng + 0.3*(Math.abs(nx-b.x) + Math.abs(ny-b.y))); }
+      if (ng < g[ns]){ g[ns] = ng; prev[ns] = s; heap.push(ns, ng + st.road*(Math.abs(nx-b.x) + Math.abs(ny-b.y))); }
     }
   }
   const squares = [];
@@ -979,6 +997,11 @@ function forge(){
   setStatus(`Generated ${state.towns.filter(t => t.kind !== 'landmark').length} towns and ${state.routes.length} routes.`);
 }
 $('forgeBtn').onclick = forge;
+$('bendy').oninput = () => {
+  const v = +$('bendy').value;
+  $('bendyOut').textContent = v < 20 ? 'STRAIGHT' : v < 40 ? 'MOSTLY STRAIGHT' : v <= 60 ? 'BALANCED' : v <= 80 ? 'WINDING' : 'VERY BENDY';
+  if (state.terrain && !state.forging){ pathCache.clear(); renumber(); render(); showInfo(); }
+};
 $('rerouteBtn').onclick = () => {
   if (!state.terrain) return;
   state.routes = buildRoutes(+$('extraCount').value); snapLandmarks();
