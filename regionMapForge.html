@@ -125,7 +125,6 @@
     </div>
     <div class="row">
       <label><input type="checkbox" id="showGrid"> Emerald grid</label>
-      <label><input type="checkbox" id="showRoads"> Real roads</label>
       <label><input type="checkbox" id="showRivers" checked> Rivers</label>
       <label><input type="checkbox" id="showClouds" checked> Clouds</label>
       <label>Theme <select id="theme" style="font-size:13px;padding:3px;border-radius:5px">
@@ -1149,7 +1148,7 @@ const spx = (x, y, w, h, c) => { sctx.fillStyle = c; sctx.fillRect(x, y, w, h); 
 const objIds = new WeakMap(); let nextObjId = 1;
 const idOf = o => o ? (objIds.get(o) || (objIds.set(o, nextObjId++), nextObjId - 1)) : 0;
 let staticKey = '', routeKey = '';
-const anim = { dashes:[], foam:[], glints:[], flow:[], clouds:[] };
+const anim = { dashes:[], foam:[], glints:[], clouds:[] };
 
 function buildStatic(){
   const t = state.terrain;
@@ -1197,51 +1196,12 @@ function buildStatic(){
   if (showRivers)
     for (let i = 0; i < SW*SH; i++)
       if (state.river[i] && t[i] !== T.SEA) spx((i % SW)*SP, ((i/SW) | 0)*SP, SP, SP, PAL.river);
-  anim.flow = showRivers ? riverFlow() : [];
   if ($('showGrid').checked){
     sctx.fillStyle = 'rgba(0,0,0,.15)';
     for (let x = 1; x < MW; x++) sctx.fillRect(x*TILE, 0, 1, cv.height);
     for (let y = 1; y < MH; y++) sctx.fillRect(0, y*TILE, cv.width, 1);
   }
-  if ($('showRoads').checked){
-    sctx.fillStyle = 'rgba(70,40,20,.7)';
-    for (const k of state.roadEdges){
-      const a = Math.floor(k/1000), b = k % 1000;
-      const ax = (a % MW)*TILE + 4, ay = ((a/MW) | 0)*TILE + 4, bx = (b % MW)*TILE + 4, by = ((b/MW) | 0)*TILE + 4;
-      sctx.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx-ax) + 1, Math.abs(by-ay) + 1);
-    }
-  }
   anim.clouds = makeClouds();
-}
-
-// River flow: number every river cell by its distance from the river's mouth (where it meets water, or
-// failing that its lowest end by elevation). Light pixels then step toward lower numbers = downstream.
-function riverFlow(){
-  const r = state.river, t = state.terrain, e = state.elev;
-  const isR = i => r[i] && t[i] !== T.SEA, dist = new Int32Array(SW*SH).fill(-1), comp = new Int32Array(SW*SH).fill(-1);
-  const nbrs = i => { const x = i % SW, y = (i/SW) | 0, out = [];
-    for (let d = 0; d < 4; d++){ const nx = x+DX[d], ny = y+DY[d]; if (inSub(nx, ny)) out.push(ny*SW + nx); } return out; };
-  const out = [];
-  for (let s0 = 0; s0 < SW*SH; s0++){
-    if (!isR(s0) || comp[s0] >= 0) continue;
-    const cells = [s0]; comp[s0] = s0;                 // gather one connected river
-    for (let h = 0; h < cells.length; h++) for (const j of nbrs(cells[h])) if (isR(j) && comp[j] < 0){ comp[j] = s0; cells.push(j); }
-    const ends = cells.filter(i => nbrs(i).filter(isR).length <= 1);
-    let mouths = cells.filter(i => nbrs(i).some(j => t[j] === T.SEA));
-    if (e && mouths.length > 1){                       // lake-to-lake rivers (Utah Lake → Great Salt Lake): the lower end wins
-      const m = Math.min(...mouths.map(i => e[i])); mouths = mouths.filter(i => e[i] <= m + 15);
-    }
-    if (!mouths.length){
-      const pool = ends.length ? ends : cells;
-      const low = e ? pool.reduce((a, b) => e[b] < e[a] ? b : a)
-                    : pool.find(i => { const x = i % SW, y = (i/SW) | 0; return x === 0 || y === 0 || x === SW-1 || y === SH-1; }) ?? pool[0];
-      mouths = [low];
-    }
-    const q = [...mouths]; mouths.forEach(i => dist[i] = 0);
-    for (let h = 0; h < q.length; h++) for (const j of nbrs(q[h])) if (isR(j) && dist[j] < 0){ dist[j] = dist[q[h]] + 1; q.push(j); }
-    for (const i of cells) if (dist[i] >= 0) out.push([(i % SW)*SP, ((i/SW) | 0)*SP, dist[i]]);
-  }
-  return out;
 }
 
 // A few soft, blocky cloud shadows (built from overlapping rectangles, filled as one shape)
@@ -1288,7 +1248,6 @@ function drawWater(){
   for (const [X, Y, ph] of anim.dashes) px(X + [0, 1, 2, 1][(tk + ph) % 4], Y, 3, 1, PAL.deep2);   // swells sway 0→1→2→1 px
   for (const [X, Y, ph] of anim.foam) if ((ph + tk) % 28 === 0) px(X, Y, 1, 1, PAL.foam);          // shoreline sparkle
   for (const [X, Y, ph] of anim.glints) if ((ph + tk) % 40 === 0) px(X, Y, 1, 1, PAL.shallow);    // lake glint
-  for (const [X, Y, d] of anim.flow) if ((((d + tk) % 5) + 5) % 5 === 0) px(X + (d & 1), Y + ((d >> 1) & 1), 1, 1, '#e4fbff');
 }
 function drawClouds(){
   if (!$('showClouds').checked || !anim.clouds.length) return;
@@ -1307,11 +1266,6 @@ function drawAnts(){                                   // marching ants along th
     const sx = Math.sign(bx - ax), sy = Math.sign(by - ay);
     for (let s = 0; s < TILE; s++, i++) if ((((i - waveTick) % 4) + 4) % 4 < 2) px(ax + sx*s, ay + sy*s, 1, 1, '#ffffff');
   }
-}
-function drawStartPulse(box){                          // a soft ring that keeps expanding from the starting town
-  const r = waveTick % 6; if (r > 3 || !box) return;
-  ctx.save(); ctx.globalAlpha = 0.85*(1 - r/4); ctx.strokeStyle = '#fff070'; ctx.lineWidth = 1;
-  ctx.strokeRect(box.x0 - r - 1.5, box.y0 - r - 1.5, box.w + 2*r + 3, box.h + 2*r + 3); ctx.restore();
 }
 
 function drawMarker(t){
@@ -1342,7 +1296,7 @@ function bracket(b){
 function render(){
   if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
   const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.river), idOf(state.roadEdges),
-              $('showGrid').checked, $('showRoads').checked, $('showRivers').checked].join('|');
+              $('showGrid').checked, $('showRivers').checked].join('|');
   if (sk !== staticKey){ buildStatic(); staticKey = sk; }
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
   const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
@@ -1375,7 +1329,6 @@ function render(){
     boxes[t.id] = drawMarker(t);
   });
   if (rv){ drawNorth(); applyTheme(); updateOverlay(); return; }
-  drawStartPulse(boxes[state.startId]);
   const selId = state.linkFrom || (state.sel && state.sel.type === 'town' && state.sel.id);
   if (selId && boxes[selId]) bracket(boxes[selId]);
   if (state.sel && state.sel.type === 'cell') bracket({ x0:state.sel.x*TILE, y0:state.sel.y*TILE, w:8, h:8 });
@@ -1549,7 +1502,6 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
   state.tool = b.dataset.tool; state.linkFrom = null; render(); showInfo();
 });
 $('showGrid').onchange = render;
-$('showRoads').onchange = render;
 $('showRivers').onchange = render;
 $('flavorNames').onchange = () => {
   if (!state.terrain) return;
