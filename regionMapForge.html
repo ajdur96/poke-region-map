@@ -313,9 +313,14 @@ const newId = () => state.nextId++;
 const footprint = (t, x = t.x, y = t.y, dir = t.dir) =>
   t.kind === 'city' && t.size === 2 ? (dir === 'v' ? [{x, y}, {x, y:y+1}] : [{x, y}, {x:x+1, y}]) : [{x, y}];
 const occupiedIn = (list, x, y, except) => list.find(o => o !== except && footprint(o).some(f => f.x === x && f.y === y));
-// Try to grow a city to 2 squares around its current square. strict = only on flat land.
+// Towns and cities keep at least two empty squares between them (Chebyshev distance ≥ 3 between footprints),
+// so every pair has room for a route. Landmarks are exempt: notable ones may sit right beside a town.
+const TOWN_GAP = 3;
+const gapOK = (sq, list, except) => list.every(o => o === except || o.kind === 'landmark' || footprint(o).every(f => cheb(f, sq) >= TOWN_GAP));
+// Try to grow a city to 2 squares around its current square. strict = only on flat land, keeping the town gap.
 function makeBig(t, list, strict, onlyDir){
-  const good = (x, y) => inSq(x, y) && !occupiedIn(list, x, y, t) && (!strict || (sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain'));
+  const good = (x, y) => inSq(x, y) && !occupiedIn(list, x, y, t) &&
+    (!strict || (sqKind(x, y) !== 'water' && sqKind(x, y) !== 'mountain' && gapOK({ x, y }, list, t)));
   const opts = [[0,0,'h'], [-1,0,'h'], [0,0,'v'], [0,-1,'v']].filter(o => !onlyDir || o[2] === onlyDir);
   for (const [dx, dy, dir] of opts){
     const fp = footprint({ kind:'city', size:2 }, t.x+dx, t.y+dy, dir);
@@ -773,13 +778,13 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
   const lockedT = locked.filter(t => t.kind !== 'landmark'), lockedL = locked.filter(t => t.kind === 'landmark');
   const anchors = lockedT.flatMap(t => footprint(t));      // new towns keep their distance from locked ones
   const want = Math.max(0, count - lockedT.length);
-  const spacing = Math.max(2.5, Math.sqrt(MW*MH/count) * 0.65);
+  const spacing = Math.max(TOWN_GAP, Math.sqrt(MW*MH/count) * 0.65);
   const free = c => !locked.some(o => footprint(o).some(f => f.x === c.x && f.y === c.y));
   const chosen = [];
   for (const c of cands){ if (chosen.length >= want) break;
-    if (free(c) && chosen.every(o => dist(o, c) >= spacing) && anchors.every(o => dist(o, c) >= spacing)) chosen.push(c); }
+    if (free(c) && chosen.every(o => dist(o, c) >= spacing && cheb(o, c) >= TOWN_GAP) && anchors.every(o => dist(o, c) >= spacing && cheb(o, c) >= TOWN_GAP)) chosen.push(c); }
   for (const c of cands){ if (chosen.length >= want) break;
-    if (free(c) && !chosen.includes(c) && chosen.every(o => cheb(o, c) >= 2) && anchors.every(o => cheb(o, c) >= 2)) chosen.push(c); }
+    if (free(c) && !chosen.includes(c) && chosen.every(o => cheb(o, c) >= TOWN_GAP) && anchors.every(o => cheb(o, c) >= TOWN_GAP)) chosen.push(c); }
 
   const nCities = Math.max(lockedT.length ? 0 : 1, Math.round(count/5) - lockedT.filter(t => t.kind === 'city').length);
   chosen.sort((a, b) => b.score - a.score);          // city status goes to the biggest, not the first placed
@@ -791,7 +796,7 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
   let tries = 0, k = 1;
   while (towns.filter(t => t.kind !== 'landmark').length < count && tries++ < 800){
     const c = { x:1 + Math.floor(rng()*(MW-2)), y:1 + Math.floor(rng()*(MH-2)) };
-    if (sqKind(c.x, c.y) === 'water' || !towns.every(o => footprint(o).every(f => dist(f, c) >= spacing*0.8))) continue;
+    if (sqKind(c.x, c.y) === 'water' || !gapOK(c, towns) || !towns.every(o => footprint(o).every(f => dist(f, c) >= spacing*0.8))) continue;
     towns.push({ id:newId(), name:`Town ${k++}`, x:c.x, y:c.y, kind:'town', size:1, score:0 });
   }
   if (k > 1) state.notes.push(`Only ${chosen.length + lockedT.length} named places fit this area — added ${k-1} placeholder town${k > 2 ? 's' : ''} ("Town #"). Try fewer towns or a bigger frame.`);
@@ -1255,6 +1260,8 @@ function drawWater(){
 }
 function drawClouds(){
   if (!$('showClouds').checked || !anim.clouds.length) return;
+  const th = $('theme').value;
+  if (th === 'night' || (th === 'live' && themeNow.alt < 0)) return;      // no sun, no cloud shadows
   ctx.fillStyle = 'rgba(10,30,50,.14)'; ctx.beginPath();
   for (const c of anim.clouds){
     const span = cv.width + c.w + 20, x = Math.floor(((c.x0 + waveTick*c.speed) % span + span) % span) - c.w - 10;
@@ -1423,10 +1430,18 @@ function cellFromEvent(e){
   const clamp = (v, n) => Math.max(0, Math.min(n-1, Math.floor(v*n)));
   return { x:clamp(fx, MW), y:clamp(fy, MH), sx:clamp(fx, SW), sy:clamp(fy, SH) };
 }
-function townAt(c){
+// reach 0 = only a town on that exact square; reach 1 = also the squares around it (forgiving taps)
+function townAt(c, reach = 1){
   let best = null;
-  for (const t of state.towns){ const d = Math.min(...footprint(t).map(f => cheb(f, c))); if (d <= 1 && (!best || d < best.d)) best = { t, d }; }
+  for (const t of state.towns){ const d = Math.min(...footprint(t).map(f => cheb(f, c))); if (d <= reach && (!best || d < best.d)) best = { t, d }; }
   return best && best.t;
+}
+// What a tap means: a town on that exact square, else a route on that square, else a town next to it.
+// (So a route running beside a town can still be selected.)
+function hitTest(c){
+  let t = townAt(c, 0), ri = -1;
+  if (!t){ ri = routeAt(c); if (ri < 0) t = townAt(c, 1); }
+  return { t, ri };
 }
 function routeAt(c){
   const paths = routePaths();
@@ -1444,7 +1459,7 @@ cv.addEventListener('pointerdown', e => {
   if (!state.terrain || state.forging) return;
   if (skipReveal()) return;                          // a tap during the reveal just finishes it
   cv.setPointerCapture(e.pointerId);
-  const c = cellFromEvent(e), t = townAt(c), ri = t ? -1 : routeAt(c);
+  const c = cellFromEvent(e), { t, ri } = hitTest(c);
   state.cursor = { x:c.x, y:c.y }; cursorOn = true;
   switch (state.tool){
     case 'inspect':
@@ -1721,7 +1736,7 @@ function liveTheme(){
   else if (a >= -6){ fn = mixT(T_GOLDEN, T_TWILIGHT, -a/6); label = 'sunset / dusk'; }
   else if (a >= -12){ fn = mixT(T_TWILIGHT, T_NIGHT, (-6 - a)/6); label = 'twilight'; }
   else { fn = T_NIGHT; label = 'night'; }
-  return { fn, key:'live' + Math.round(a*2), info:`☀ sun ${a >= 0 ? a.toFixed(0) + '° up' : (-a).toFixed(0) + '° below the horizon'}: ${label}` };
+  return { fn, alt:a, key:'live' + Math.round(a*2), info:`☀ sun ${a >= 0 ? a.toFixed(0) + '° up' : (-a).toFixed(0) + '° below the horizon'}: ${label}` };
 }
 let themeLut = new Map(), themeLutKey = '', themeNow = { fn:null, key:'day', info:'' };
 function refreshTheme(){
