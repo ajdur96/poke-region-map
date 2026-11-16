@@ -587,6 +587,9 @@ function snapLandmarks(){
 // ===== Rendering =====
 const cv = $('region'), ctx = cv.getContext('2d');
 const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
+const ROUTE_ALPHA = 0.75;                                  // 1 = solid, lower = more terrain shows through
+const routeLayer = document.createElement('canvas'); routeLayer.width = cv.width; routeLayer.height = cv.height;
+const rctx = routeLayer.getContext('2d');
 
 function bfsSub(isSource){
   const d = new Int16Array(SW*SH).fill(99), q = [];
@@ -709,12 +712,17 @@ function render(){
     });
   });
   const segRect = (s, pad) => [Math.min(s.ax, s.bx)-pad, Math.min(s.ay, s.by)-pad, Math.abs(s.bx-s.ax)+pad*2, Math.abs(s.by-s.ay)+pad*2];
-  for (const s of segs){ const [x, y, w, h] = segRect(s, 3); px(x, y, w, h, s.water ? PAL.sOut : PAL.rOut); }
-  for (const b of blocks) px(b.x-3, b.y-3, 6, 6, b.water ? PAL.sOut : PAL.rOut);
-  for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, 2); px(x, y, w, h, s.water ? PAL.sFill : PAL.rFill); }
-  for (const b of blocks.filter(b => !b.sel)) px(b.x-2, b.y-2, 4, 4, b.water ? PAL.sFill : PAL.rFill);
-  for (const s of segs.filter(s => s.sel)){ const [x, y, w, h] = segRect(s, 2); px(x, y, w, h, PAL.rSel); }
-  for (const b of blocks.filter(b => b.sel)) px(b.x-2, b.y-2, 4, 4, PAL.rSel);
+  // Routes are painted solid on their own layer, then laid over the terrain at ROUTE_ALPHA in one go.
+  // (Blending each piece separately would make overlaps and corners darker.)
+  rctx.clearRect(0, 0, routeLayer.width, routeLayer.height);
+  const rpx = (x, y, w, h, c) => { rctx.fillStyle = c; rctx.fillRect(x, y, w, h); };
+  for (const s of segs){ const [x, y, w, h] = segRect(s, 3); rpx(x, y, w, h, s.water ? PAL.sOut : PAL.rOut); }
+  for (const b of blocks) rpx(b.x-3, b.y-3, 6, 6, b.water ? PAL.sOut : PAL.rOut);
+  for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, s.water ? PAL.sFill : PAL.rFill); }
+  for (const b of blocks.filter(b => !b.sel)) rpx(b.x-2, b.y-2, 4, 4, b.water ? PAL.sFill : PAL.rFill);
+  for (const s of segs.filter(s => s.sel)){ const [x, y, w, h] = segRect(s, 2); rpx(x, y, w, h, PAL.rSel); }
+  for (const b of blocks.filter(b => b.sel)) rpx(b.x-2, b.y-2, 4, 4, PAL.rSel);
+  ctx.globalAlpha = ROUTE_ALPHA; ctx.drawImage(routeLayer, 0, 0); ctx.globalAlpha = 1;
   // markers
   const boxes = {};
   for (const kind of ['landmark', 'town', 'city']) state.towns.filter(t => t.kind === kind).forEach(t => boxes[t.id] = drawMarker(t));
