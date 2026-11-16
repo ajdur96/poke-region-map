@@ -613,14 +613,21 @@ function drawTerrain(){
   const t = state.terrain;
   const toLand = bfsSub(i => t[i] !== T.SEA), toWater = bfsSub(i => t[i] === T.SEA);
   const at = (x, y) => inSub(x, y) ? t[y*SW+x] : -1;
+  const waves = [];   // drawn after the base layer so drifting pixels aren't clipped by neighbours
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
     const i = sy*SW + sx, X = sx*SP, Y = sy*SP, v = t[i];
     if (v === T.SEA){
       const d = toLand[i];
-      if (state.lake[i]) px(X, Y, SP, SP, d <= 1 ? PAL.shallow : PAL.mid);
-      else {
+      const h = hash(sx, sy), phase = Math.floor(hash(sy, sx)*64);
+      if (state.lake[i]){
+        px(X, Y, SP, SP, d <= 1 ? PAL.shallow : PAL.mid);
+        if (d >= 2 && (phase + waveTick) % 40 === 0) waves.push([X, Y, 1, 1, PAL.shallow]);       // lake glint
+      } else {
         px(X, Y, SP, SP, d <= 1 ? PAL.shallow : d <= 3 ? PAL.mid : PAL.deep);
-        if (d >= 4 && hash(sx, sy) > 0.9) px(X, Y+1, 3, 1, PAL.deep2);
+        // open-sea swells: short dashes that sway 0→1→2→1 px
+        if (d >= 4 && h > 0.9) waves.push([X + [0, 1, 2, 1][(waveTick + phase) % 4], Y+1, 3, 1, PAL.deep2]);
+        // shoreline sparkle: a foam pixel blinks on now and then
+        if (d === 1 && (phase + waveTick) % 28 === 0) waves.push([X + (h > .5 ? 1 : 0), Y, 1, 1, PAL.foam]);
       }
     } else if (v === T.LAND){
       const blob = hash(sx >> 3, sy >> 3) > 0.55;
@@ -638,6 +645,7 @@ function drawTerrain(){
       if (at(sx, sy+1) !== T.PEAK) px(X, Y+SP-1, SP, 1, PAL.peakLo);
     }
   }
+  for (const w of waves) px(...w);
   // coastline: dark green on land, white foam on water
   for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
     if (t[sy*SW+sx] === T.SEA) continue;
@@ -1011,7 +1019,16 @@ function drawCursor(){
     px(X-1+o, Y-1+o, 2, 10, c); px(X+7+o, Y-1+o, 2, 10, c);
   }
 }
-setInterval(() => { if (state.terrain){ cursorOn = !cursorOn; render(); } }, 450);
+// One clock drives both: waves step every 250 ms, cursor blinks every 500 ms. Waves hold still for reduced-motion users.
+let waveTick = 0, frame = 0;
+const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+setInterval(() => {
+  if (!state.terrain) return;
+  frame++;
+  if (!reduceMotion) waveTick = frame;
+  if (frame % 2 === 0) cursorOn = !cursorOn;
+  render();
+}, 250);
 document.querySelectorAll('[data-move]').forEach(b => b.onclick = () => {
   const [dx, dy] = b.dataset.move.split(',').map(Number); moveCursor(state.cursor.x+dx, state.cursor.y+dy);
 });
