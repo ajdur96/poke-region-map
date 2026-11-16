@@ -21,6 +21,8 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 - **Route style:** a straight ↔ bendy slider. Straight makes turns expensive so routes run in long lines; bendy makes turns cheap, pulls routes onto real roads harder, and adds a gentle random wander. Changes apply instantly.
 - **Route names:** each route is named after the most distinctive real feature it passes, in priority order: roads ("I-15 Corridor"), rivers ("Jordan River Walk"), lakes ("Utah Lake Shore"), seas and bays ("Chesapeake Bay Coast"), then mountains ("Wasatch Range Pass"). Only if none apply does it fall back to terrain, using a real landform where possible ("Great Basin Flats"). A **Pokémon-style** toggle swaps in livelier versions ("I-15 Cycling Road", "Potomac Bridge"), and any route can be renamed by hand.
 - **Ambient animation:** swaying sea swells, shoreline sparkles and lake glints; drifting cloud shadows (toggle); marching ants along the selected route; and a slide-in location pop-up. Motion stops if your device asks for reduced motion.
+- **Route profiles:** select a route to see its real length in km and an elevation profile (climb, descent, lowest and highest point). The list shows each route's length too.
+- **Place blurbs:** selecting a real town or landmark shows the first two sentences of its Wikipedia article (found near the place's real coordinates, with a link and CC BY-SA credit).
 - **Themes:** Day, Night, Pokétch (4-green handheld style), Sepia, and **Live**, which tints the map by the real sun altitude at the region's centre right now (day → golden hour → dusk → twilight → night, refreshed every minute). Saved with the region and included in share links.
 - **Map reveal:** after forging, the terrain sweeps in as soon as it's ready, then routes grow outward from the starting town by travel distance and towns pop in as they're reached. Rerolls replay it; tap the map to skip.
 - **Fast drawing:** terrain and routes are cached as layers; each animation frame only draws the moving pixels (about 100 operations instead of ~7,400).
@@ -34,7 +36,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 - **Lock:** lock any town or landmark from its info box (gold padlock on the map). Locked places survive rerolls exactly where they are, can't be deleted until unlocked, and routes you renamed keep their names as long as the same two towns stay connected.
 - **Undo/redo:** every edit (moving, adding, deleting, linking, painting, renaming, sliders, re-route, even forging a new region) can be undone, 50 steps back. Buttons or Ctrl+Z / Ctrl+Y.
 - **Auto-save:** your current region is saved in this browser and comes back when you reopen the page.
-- **Export / import:** a 4× PNG, and JSON with a 28×15 `MAPSEC_*` layout, terrain sub-grid, towns and routes. The JSON also carries the full editor state, so **Import JSON** reopens it exactly where you left off (older exports import too, minus elevation and road data).
+- **Export / import:** a poster PNG (title, the map, north arrow, scale bar in km and miles, a legend in the current theme, and data credits), a plain 4× map PNG for game assets, and JSON with a 28×15 `MAPSEC_*` layout, terrain sub-grid, towns and routes. The JSON also carries the full editor state, so **Import JSON** reopens it exactly where you left off (older exports import too, minus elevation and road data).
 
 ## Usage
 

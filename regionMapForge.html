@@ -72,6 +72,9 @@
   #region{width:100%;display:block;image-rendering:pixelated;image-rendering:crisp-edges;aspect-ratio:28/15;touch-action:none;background:#3098c0}
   .textbox{background:#f8f8f8;color:var(--ink);border:4px solid #586898;outline:3px solid #fff;border-radius:6px;padding:10px 12px;margin-top:12px;min-height:70px;font-size:10px;line-height:1.8}
   .textbox small{font-family:system-ui,sans-serif;font-size:12px;opacity:.75;line-height:1.4;display:block;margin-top:4px}
+  .textbox .wiki{font-family:system-ui,sans-serif;font-size:12.5px;line-height:1.45;margin-top:8px;padding-top:7px;border-top:1px dashed #b8c0d8}
+  .textbox .wiki a{color:#3050a0}
+  .textbox svg.profile{display:block;width:100%;height:58px;margin-top:6px}
   .tools,.actions,#infoActions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
   #infoActions button{font-size:8px;padding:7px 8px}
   .hint{font-size:12px;opacity:.7;margin-top:8px}
@@ -158,7 +161,8 @@
     <div class="actions">
       <button id="rerollBtn" title="Same area, different towns and landmarks (locked ones stay)">🎲 REROLL</button>
       <button id="rerouteBtn">RE-ROUTE</button>
-      <button id="pngBtn">EXPORT PNG</button>
+      <button id="pngBtn" title="Map with title, legend, scale bar and north arrow">EXPORT PNG</button>
+      <button id="pngRawBtn" title="Just the map, 4× size, for game assets">MAP-ONLY PNG</button>
       <button id="jsonBtn">EXPORT JSON</button>
     </div>
     <div class="hint" id="toolHint"></div>
@@ -779,7 +783,7 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
 
   const nCities = Math.max(lockedT.length ? 0 : 1, Math.round(count/5) - lockedT.filter(t => t.kind === 'city').length);
   chosen.sort((a, b) => b.score - a.score);          // city status goes to the biggest, not the first placed
-  const fresh = chosen.map((c, i) => ({ id:newId(), name:c.name, x:c.x, y:c.y, kind:i < nCities ? 'city' : 'town', size:1, score:c.score }));
+  const fresh = chosen.map((c, i) => ({ id:newId(), name:c.name, x:c.x, y:c.y, kind:i < nCities ? 'city' : 'town', size:1, score:c.score, lat:c.lat, lon:c.lon }));
   const towns = [...locked, ...fresh];
   // The biggest new cities get 2 squares, like Emerald's larger cities
   fresh.filter(t => t.kind === 'city').slice(0, Math.ceil(nCities/2)).forEach(t => makeBig(t, towns, true));
@@ -802,13 +806,13 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
       if (isLm() >= nLm) break;
       // notable landmarks may sit right next to a town (just not on it); keep landmarks 3 apart from each other
       if (towns.every(o => footprint(o).every(f => cheb(f, l) >= (o.kind === 'landmark' ? 3 : 1))))
-        towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural });
+        towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural, lat:l.lat, lon:l.lon });
     }
     // 2) then leftover settlements
     for (const c of cands){
       if (isLm() >= nLm) break;
       if (!chosen.includes(c) && towns.every(o => footprint(o).every(f => cheb(f, c) >= 2)))
-        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score });
+        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score, lat:c.lat, lon:c.lon });
     }
   }
   return towns;
@@ -1384,11 +1388,13 @@ function showInfo(){
       if (!makeBig(t, state.towns, false, t.dir === 'v' ? 'h' : 'v')){ Object.assign(t, keep); setStatus('No room to rotate here.'); }
     });
     if (t.kind !== 'landmark' && t.id !== state.startId) actionBtn('MAKE START', () => { state.startId = t.id; });
+    showWiki(t, box);
     return;
   }
   if (sel && sel.type === 'route' && state.routes[sel.idx]){
     const r = state.routes[sel.idx], p = findPath(townById(r.a), townById(r.b));
-    box.innerHTML = `${esc(r.name || 'Route')}<small>${esc(townById(r.a).name)} ↔ ${esc(townById(r.b).name)} · ${p.squares.length} squares<br>Follows real roads: ${Math.round(p.roadFrac*100)}%${p.waterFrac > 0.5 ? ' · Sea route (Surf)' : ''}${r.custom ? ' · your name' : ''}</small>`;
+    const pr = routeProfile(p.squares);
+    box.innerHTML = `${esc(r.name || 'Route')}<small>${esc(townById(r.a).name)} ↔ ${esc(townById(r.b).name)} · ${fmtKm(pr.km)} (${p.squares.length} squares)<br>Follows real roads: ${Math.round(p.roadFrac*100)}%${p.waterFrac > 0.5 ? ' · Sea route (Surf)' : ''}${r.custom ? ' · your name' : ''}</small>${profileSvg(pr)}`;
     actionBtn('RENAME', () => { const v = prompt('Name this route:', r.name); if (v && v.trim()){ r.name = v.trim(); r.custom = true; } });
     if (r.custom) actionBtn('AUTO NAME', () => { r.custom = false; });
     return;
@@ -1777,6 +1783,73 @@ function revealNow(){
 }
 function skipReveal(){ if (!reveal) return false; reveal = null; render(); showInfo(); return true; }
 
+// ===== Route distance + elevation profile =====
+const kmPerSquare = () => state.gen?.b.kmPerSquare || (state.gen?.b.wKm ? state.gen.b.wKm/MW : frameKm(state.gen?.b || frameBounds()).w/MW);
+const fmtKm = km => km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km).toLocaleString()} km`;
+function routeProfile(sqs){
+  const km = Math.max(0, sqs.length - 1)*kmPerSquare();
+  if (!state.elev || sqs.length < 2) return { km, e:null };
+  const e = [], at = (sx, sy) => Math.max(0, state.elev[sy*SW + sx]);           // water counts as sea level
+  for (let k = 1; k < sqs.length; k++){
+    const a = sqs[k-1], b = sqs[k], dx = b.x - a.x, dy = b.y - a.y;            // walk the centre line, one sub-cell at a time
+    for (let s = 0; s < SUB; s++) e.push(at(a.x*SUB + 2 + dx*s, a.y*SUB + 2 + dy*s));
+  }
+  const last = sqs[sqs.length-1]; e.push(at(last.x*SUB + 2, last.y*SUB + 2));
+  let climb = 0, descent = 0;
+  for (let i = 1; i < e.length; i++){ const d = e[i] - e[i-1]; if (d > 0) climb += d; else descent -= d; }
+  return { km, e, climb, descent, min:Math.min(...e), max:Math.max(...e) };
+}
+function profileSvg(pr){
+  if (!pr.e) return '<small>Elevation profile unavailable for this region.</small>';
+  const W = 260, H = 50, lo = pr.min, span = Math.max(30, pr.max - lo), n = pr.e.length;
+  const pts = pr.e.map((v, i) => `${(i/(n - 1)*W).toFixed(1)},${(H - 4 - (v - lo)/span*(H - 10)).toFixed(1)}`).join(' ');
+  return `<small>↑ ${Math.round(pr.climb).toLocaleString()} m climb · ↓ ${Math.round(pr.descent).toLocaleString()} m descent · ${Math.round(pr.min).toLocaleString()}–${Math.round(pr.max).toLocaleString()} m</small>
+    <svg class="profile" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Elevation profile">
+      <polygon points="0,${H} ${pts} ${W},${H}" fill="#9ad66a" opacity=".55"/>
+      <polyline points="${pts}" fill="none" stroke="#2d6a2d" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+// ===== Wikipedia blurbs =====
+// Finds the article for a real place: first by searching Wikipedia's geotagged pages near the place's real
+// coordinates for a matching title, then by exact title with a distance check. Shows the first two sentences.
+const wikiCache = new Map();
+const normName = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+async function getJson(url){ const r = await fetch(url); if (!r.ok) throw new Error(r.status); return r.json(); }
+function wikiBlurb(t){
+  if (/^(Town \d+|New Town)$/.test(t.name)) return Promise.resolve(null);
+  const key = `${t.name}@${t.lat ?? t.x},${t.lon ?? t.y}`;
+  if (wikiCache.has(key)) return wikiCache.get(key);
+  const job = (async () => {
+    const ll = t.lat != null ? { lat:t.lat, lng:t.lon } : toLatLng(t.x, t.y), want = normName(t.name);
+    const gs = await getJson(`https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${ll.lat.toFixed(5)}|${ll.lng.toFixed(5)}&gsradius=10000&gslimit=30&format=json&origin=*`);
+    const near = gs.query?.geosearch || [];
+    let title = (near.find(g => normName(g.title) === want || normName(g.title).startsWith(want + ',')) ||
+                 near.find(g => normName(g.title).startsWith(want + ' (')))?.title;
+    if (!title) title = t.name;                        // big features (lakes, ranges) have their pin far away: try the plain title
+    const sm = await getJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`);
+    if (sm.type === 'disambiguation' || !sm.extract) return null;
+    if (sm.coordinates){                               // reject a same-named page somewhere else in the world
+      const R = 6371, rad = Math.PI/180, dLat = (sm.coordinates.lat - ll.lat)*rad, dLon = (sm.coordinates.lon - ll.lng)*rad;
+      const dist = 2*R*Math.asin(Math.sqrt(Math.sin(dLat/2)**2 + Math.cos(ll.lat*rad)*Math.cos(sm.coordinates.lat*rad)*Math.sin(dLon/2)**2));
+      if (dist > 150) return null;
+    } else if (title === t.name && !near.length) return null;
+    const sentences = sm.extract.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [sm.extract];
+    return { text:sentences.slice(0, 2).map(x => x.trim()).join(' '), url:sm.content_urls?.desktop?.page, title:sm.title };
+  })().catch(() => null);
+  wikiCache.set(key, job);
+  return job;
+}
+function showWiki(t, box){
+  if (/^(Town \d+|New Town)$/.test(t.name)) return;
+  const div = document.createElement('div'); div.className = 'wiki'; div.textContent = 'Looking it up on Wikipedia…';
+  box.appendChild(div);
+  wikiBlurb(t).then(w => {
+    if (!div.isConnected) return;                    // the selection moved on
+    if (!w){ div.textContent = 'No Wikipedia article found for this place.'; return; }
+    div.innerHTML = `${esc(w.text)} <a href="${esc(w.url)}" target="_blank" rel="noopener">Wikipedia</a> <span style="opacity:.6">(CC BY-SA)</span>`;
+  });
+}
+
 // ===== Region title bar =====
 // Suggests a one-word-ish name from the region's most prominent named feature: a mountain range,
 // then a sea or bay, then a landform, then the biggest city. "Wasatch Range" → "WASATCH".
@@ -1824,7 +1897,7 @@ function renderList(){
        t.name, `${t.kind === 'city' ? (t.size === 2 ? 'Big city' : 'City') : 'Town'}${t.id === state.startId ? ' · Start' : ''}${t.locked ? ' · 🔒' : ''}`)).join('')}</table>` +
     (lms.length ? `<h4 class="pixel">LANDMARKS</h4><table>${lms.map(t => row('town', t.id, icon(t), t.name, t.locked ? '🔒 Locked' : 'Landmark')).join('')}</table>` : '') +
     `<h4 class="pixel">ROUTES</h4><table>${order.map(i => { const r = state.routes[i];
-       return row('route', i, '〰', r.name || 'Route', `${esc(townById(r.a)?.name || '?')} ↔ ${esc(townById(r.b)?.name || '?')}${r.custom ? ' · your name' : ''}`); }).join('')}</table>`;
+       return row('route', i, '〰', r.name || 'Route', `${esc(townById(r.a)?.name || '?')} ↔ ${esc(townById(r.b)?.name || '?')} · ${fmtKm(routeProfile(routePaths()[i].squares).km)}${r.custom ? ' · your name' : ''}`); }).join('')}</table>`;
 }
 $('listBody').addEventListener('click', e => {
   const tr = e.target.closest('tr.item'); if (!tr) return;
@@ -2149,14 +2222,80 @@ function download(name, blob){
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
-$('pngBtn').onclick = () => {
+// Render a clean frame (no cursor, selection or reveal) for exporting
+function cleanFrame(){
+  const keep = { sel:state.sel, link:state.linkFrom, cur:cursorOn, rev:reveal };
+  state.sel = null; state.linkFrom = null; cursorOn = false; reveal = null; render();
+  return () => { state.sel = keep.sel; state.linkFrom = keep.link; cursorOn = keep.cur; reveal = keep.rev; render(); };
+}
+$('pngRawBtn').onclick = () => {
   if (!state.terrain) return;
-  const keepSel = state.sel, keepLink = state.linkFrom;
-  state.sel = null; state.linkFrom = null; render();
+  const restore = cleanFrame();
   const big = document.createElement('canvas'); big.width = cv.width*4; big.height = cv.height*4;
   const bctx = big.getContext('2d'); bctx.imageSmoothingEnabled = false; bctx.drawImage(cv, 0, 0, big.width, big.height);
-  state.sel = keepSel; state.linkFrom = keepLink; render();
-  big.toBlob(b => download('regionMap.png', b));
+  restore();
+  big.toBlob(b => download('regionMap-map.png', b));
+};
+// Poster: title bar, the map, north arrow, scale bar (km + miles), a legend in the current theme, and credits
+$('pngBtn').onclick = async () => {
+  if (!state.terrain) return;
+  if (document.fonts) await document.fonts.ready;
+  const restore = cleanFrame();
+  const S = 3, mapW = cv.width*S, mapH = cv.height*S, pad = 18, titleH = 50, legendH = 104;
+  const P = document.createElement('canvas'); P.width = mapW + pad*2; P.height = titleH + mapH + legendH + pad*2;
+  const g = P.getContext('2d'); g.imageSmoothingEnabled = false;
+  const pix = '"Press Start 2P", monospace', sans = 'system-ui, -apple-system, sans-serif';
+  g.fillStyle = '#1c2440'; g.fillRect(0, 0, P.width, P.height);
+  // title
+  const kps = kmPerSquare(), title = (state.regionName || 'Region').toUpperCase();
+  g.fillStyle = '#000'; g.font = `18px ${pix}`; g.fillText(title, pad + 2, pad + 26);
+  g.fillStyle = '#ffffff'; g.fillText(title, pad, pad + 24);
+  g.font = `13px ${sans}`; g.fillStyle = '#b8c4f0'; g.textAlign = 'right';
+  g.fillText(`${MW}×${MH} squares · ${fmtKm(kps)} per square · ≈ 1:${Math.round(kps*RF_PER_KPS).toLocaleString()}`, P.width - pad, pad + 22);
+  g.textAlign = 'left';
+  // map
+  const mx = pad, my = pad + titleH;
+  g.fillStyle = '#000'; g.fillRect(mx - 3, my - 3, mapW + 6, mapH + 6);
+  g.drawImage(cv, mx, my, mapW, mapH);
+  restore();
+  // north arrow (always on the poster; points to true north even when the frame is rotated)
+  const th = (state.gen?.b.rot || 0)*Math.PI/180, nx = mx + mapW - 30, ny = my + 30, ux = -Math.sin(th), uy = -Math.cos(th);
+  g.fillStyle = 'rgba(0,0,0,.55)'; g.beginPath(); g.arc(nx, ny, 20, 0, Math.PI*2); g.fill();
+  g.fillStyle = '#f83030'; g.beginPath(); g.moveTo(nx + ux*15, ny + uy*15); g.lineTo(nx - uy*6, ny + ux*6); g.lineTo(nx + uy*6, ny - ux*6); g.fill();
+  g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(nx - ux*15, ny - uy*15); g.lineTo(nx - uy*6, ny + ux*6); g.lineTo(nx + uy*6, ny - ux*6); g.fill();
+  g.font = `9px ${pix}`; g.textAlign = 'center'; g.fillText('N', nx + ux*28 - 0, ny + uy*28 + 4); g.textAlign = 'left';
+  // scale bar: a "nice" length (1, 2 or 5 × 10ⁿ km) no wider than a quarter of the map
+  const pxPerKm = mapW/(MW*kps), maxKm = mapW*0.25/pxPerKm;
+  const mag = Math.pow(10, Math.floor(Math.log10(maxKm))), niceKm = [5, 2, 1].map(f => f*mag).find(v => v <= maxKm) || mag;
+  const bw = niceKm*pxPerKm, sx = pad, sy = my + mapH + 28;
+  for (let k = 0; k < 4; k++){ g.fillStyle = k % 2 ? '#ffffff' : '#000000'; g.fillRect(sx + k*bw/4, sy, bw/4, 8); }
+  g.strokeStyle = '#ffffff'; g.lineWidth = 1; g.strokeRect(sx + .5, sy + .5, bw - 1, 7);
+  g.fillStyle = '#e8ecf8'; g.font = `12px ${sans}`;
+  g.fillText('0', sx - 3, sy + 24);
+  const scaleLabel = `${fmtKm(niceKm)} (${(niceKm*0.621371).toFixed(niceKm < 5 ? 1 : 0)} mi)`;
+  g.fillText(scaleLabel, sx + bw + 8, sy + 9);
+  // legend (swatches in the current theme's colours)
+  const tc = hex => { const fn = themeNow.fn; if (!fn) return hex; const n = parseInt(hex.slice(1), 16), c = fn(n >> 16, (n >> 8) & 255, n & 255);
+    return `rgb(${c.map(clamp8).join(',')})`; };
+  const items = [
+    ['Big city', (x, y) => { g.fillStyle = tc(PAL.cOut); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.cFill); g.fillRect(x+2, y+2, 18, 8); }],
+    ['City / town', (x, y) => { g.fillStyle = tc(PAL.tOut); g.fillRect(x+5, y, 12, 12); g.fillStyle = tc(PAL.tFill); g.fillRect(x+7, y+2, 8, 8); }],
+    ['Landmark', (x, y) => { g.fillStyle = tc(PAL.lOut); g.fillRect(x+3, y+2, 16, 9); g.fillStyle = tc(PAL.lFill); g.fillRect(x+5, y+4, 12, 5); }],
+    ['Route', (x, y) => { g.fillStyle = tc(PAL.rOut); g.fillRect(x, y+2, 22, 9); g.fillStyle = tc(PAL.rFill); g.fillRect(x, y+4, 22, 5); }],
+    ['Sea route', (x, y) => { g.fillStyle = tc(PAL.sOut); g.fillRect(x, y+2, 22, 9); g.fillStyle = tc(PAL.sFill); g.fillRect(x, y+4, 22, 5); }],
+    ['River', (x, y) => { g.fillStyle = tc(PAL.land2); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.river); g.fillRect(x, y+5, 22, 3); }],
+    ['Mountains', (x, y) => { g.fillStyle = tc(PAL.mtn); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.mtnHi); g.fillRect(x, y, 22, 2); g.fillStyle = tc(PAL.peak); g.fillRect(x+8, y, 6, 4); }],
+    ['Water', (x, y) => { g.fillStyle = tc(PAL.deep); g.fillRect(x, y, 22, 12); g.fillStyle = tc(PAL.shallow); g.fillRect(x, y, 22, 3); }]
+  ];
+  const lx0 = sx + bw + 8 + g.measureText(scaleLabel).width + 34, colW = (P.width - pad - lx0)/3;
+  g.font = `12px ${sans}`;
+  items.forEach(([label, draw], i) => {
+    const x = lx0 + (i % 3)*colW, y = my + mapH + 16 + Math.floor(i/3)*26;
+    draw(x, y); g.fillStyle = '#e8ecf8'; g.fillText(label, x + 28, y + 11);
+  });
+  g.font = `10px ${sans}`; g.fillStyle = '#8890b0';
+  g.fillText('Data: Natural Earth · GeoNames (CC BY 4.0) · © OpenStreetMap contributors · Terrain Tiles (AWS) · made with Region Map Forge', pad, P.height - pad + 4);
+  P.toBlob(b => download('regionMap.png', b));
 };
 const mapsecId = name => 'MAPSEC_' + String(name).normalize('NFD').replace(/[^\w\s]/g, '').trim().toUpperCase().replace(/\s+/g, '_');
 $('jsonBtn').onclick = () => {
