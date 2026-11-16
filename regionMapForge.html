@@ -357,10 +357,15 @@ const bboxStr = b => `${b.s},${b.w},${b.n},${b.e}`;
 // and villages/hamlets are always there to fill sparse areas with real names.
 async function fetchPlaces(b, z, onBytes){
   const bb = bboxStr(b);
+  // Zoomed in (frame under 60 km wide) there may be only one or two towns, so neighborhoods
+  // (suburbs, quarters, neighbourhoods) join in as stand-ins. Skipped on wide frames to save download.
+  const hoods = frameKm(b).w < 60
+    ? `node["place"="suburb"]["name"](${bb})->.s; node["place"="quarter"]["name"](${bb})->.q;
+       node["place"="neighbourhood"]["name"](${bb})->.n; .s out body 300; .q out body 200; .n out body 300;` : '';
   const json = await overpass(`[out:json][timeout:40];
     node["place"="city"]["name"](${bb})->.c;  node["place"="town"]["name"](${bb})->.t;
     node["place"="village"]["name"](${bb})->.v; node["place"="hamlet"]["name"](${bb})->.h;
-    .c out body 300; .t out body 600; .v out body 400; .h out body 200;`, onBytes);
+    .c out body 300; .t out body 600; .v out body 400; .h out body 200; ${hoods}`, onBytes);
   return json.elements.map(e => ({ name:e.tags['name:en'] || e.tags.name, lat:e.lat, lon:e.lon, place:e.tags.place,
     pop: parseInt(String(e.tags.population || '').replace(/[^0-9]/g, '')) || 0, capital:e.tags.capital }));
 }
@@ -499,7 +504,8 @@ function snapToLand(c){
 }
 
 function pickTowns(places, count, wantLandmarks, landmarks = []){
-  const base = { city:300000, town:30000, village:3000, hamlet:300 };
+  // typical sizes, used only when OSM has no population; neighborhoods rank as filler below villages
+  const base = { city:300000, town:30000, village:3000, suburb:2000, quarter:1000, hamlet:300, neighbourhood:500 };
   const cands = places.filter(p => p.name).map(p => {
     const f = toSqF(p.lat, p.lon); return { ...p, x:Math.floor(f.x), y:Math.floor(f.y) };
   }).filter(c => inSq(c.x, c.y));
@@ -510,6 +516,12 @@ function pickTowns(places, count, wantLandmarks, landmarks = []){
     Object.assign(c, snapToLand(c));
   });
   cands.sort((a, b) => b.score - a.score);
+  // the same name can appear twice (e.g. a city and its "Downtown" suburb share it): keep the higher-ranked one
+  const seen = new Set();
+  for (let i = 0; i < cands.length; i++){                   // sorted best-first, so the first copy wins
+    if (seen.has(cands[i].name)){ cands.splice(i--, 1); continue; }
+    seen.add(cands[i].name);
+  }
 
   const spacing = Math.max(2.5, Math.sqrt(MW*MH/count) * 0.65);
   const chosen = [];
