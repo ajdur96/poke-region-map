@@ -504,6 +504,60 @@ async function readJson(res, onBytes){
   for (const c of chunks){ buf.set(c, o); o += c.length; }
   return JSON.parse(new TextDecoder().decode(buf));
 }
+// ===== Place names in Latin letters =====
+// Order of preference: an English or Latin-letter name tag from OpenStreetMap → the Latin half of a
+// mixed name ("Sidi Senoussi سيدي سنوسي") → automatic romanization of the local script (any-ascii,
+// loaded only when a region needs it). The original local name is kept and shown in the info box.
+const NON_LATIN = /(?=\p{L})\P{Script=Latin}/u;
+const hasNonLatin = s => NON_LATIN.test(s || '');
+// Best name from an OSM tag set, before any romanizing: English / international / Latin-script tags first
+function bestOsmName(tags){
+  const cands = [tags['name:en'], tags.int_name, tags['name:latin'], tags['official_name:en'],
+    ...Object.keys(tags).filter(k => /^name:[a-z]{2,3}[-_](latn|rm)/i.test(k)).map(k => tags[k])];
+  const latin = cands.find(n => n && !hasNonLatin(n));
+  return { name:latin || tags.name, local:hasNonLatin(tags.name) ? tags.name : undefined };
+}
+// The Latin words of a mixed-script name, or '' if there are none
+function latinPart(raw){
+  return raw.split(/\s+/).filter(w => !hasNonLatin(w) && /\p{L}/u.test(w)).join(' ').replace(/^[\s,;:/|()\-–—]+|[\s,;:/|()\-–—]+$/g, '');
+}
+let romanizerJob = null;
+function loadRomanizer(){
+  if (window.anyAscii) return Promise.resolve();
+  return romanizerJob || (romanizerJob = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'vendor/any-ascii.js';
+    sc.onload = () => res(); sc.onerror = () => { romanizerJob = null; rej(new Error('romanizer unavailable')); };
+    document.head.appendChild(sc);
+  }));
+}
+// any-ascii output → readable name: "BeiJing" → "Beijing", "'adis 'abeba" → "Adis Abeba", "thim-phu" → "Thim-Phu"
+function prettyRoman(r){
+  return r.split(/\s+/).map(w => w.replace(/^['`]+|['`]+$/g, '').split('-').map(p => {
+    if (!p) return p;
+    const camel = /^[A-Z][a-z]+(?:[A-Z][a-z]+)+$/.test(p);
+    return camel || p === p.toLowerCase() ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p;
+  }).join('-')).filter(Boolean).join(' ');
+}
+// Returns { name, romanized } with the name in Latin letters (falls back to the raw name if romanizing is unavailable)
+function cleanName(raw){
+  let n = String(raw || '').normalize('NFC');
+  if (!hasNonLatin(n)) return { name:n.replace(/\p{M}/gu, '').trim() || n, romanized:false };   // drop stray combining marks
+  const lp = latinPart(n);
+  if (lp) return { name:lp, romanized:false };
+  if (!window.anyAscii) return { name:n, romanized:false };
+  const r = prettyRoman(window.anyAscii(n)).trim();
+  return r ? { name:r, romanized:true } : { name:n, romanized:false };
+}
+// Put every name in a list into Latin letters, remembering the local original
+async function normalizeNames(list){
+  if (list.some(o => o && hasNonLatin(o.name) && !latinPart(o.name))) await loadRomanizer().catch(() => {});
+  for (const o of list){
+    if (!o || !o.name) continue;
+    const raw = o.name, c = cleanName(raw);
+    if (c.name !== raw){ o.name = c.name; if (hasNonLatin(raw)) o.local = o.local || raw; if (c.romanized) o.romanized = true; }
+  }
+}
+
 // ===== Bundled map data: Natural Earth + GeoNames, pre-cut into 10° tiles (see tools/build_static_data.py) =====
 // Served from this site, so it's fast and never rate-limited. Overpass only adds extra detail on top.
 const STATIC_DIR = 'data/ne/';
@@ -625,7 +679,7 @@ async function fetchPlaces(b, z, onBytes, deadline){
     node["place"="city"]["name"](${bb})->.c;  node["place"="town"]["name"](${bb})->.t;
     node["place"="village"]["name"](${bb})->.v; node["place"="hamlet"]["name"](${bb})->.h;
     .c out body 300; .t out body 600; .v out body 400; .h out body 200; ${hoods}`, onBytes, deadline);
-  return json.elements.map(e => ({ name:e.tags['name:en'] || e.tags.name, lat:e.lat, lon:e.lon, place:e.tags.place,
+  return json.elements.map(e => ({ ...bestOsmName(e.tags), lat:e.lat, lon:e.lon, place:e.tags.place,
     pop: parseInt(String(e.tags.population || '').replace(/[^0-9]/g, '')) || 0, capital:e.tags.capital }));
 }
 
@@ -653,7 +707,7 @@ async function fetchLandmarks(b, onBytes, deadline){
     else if (t.man_made === 'lighthouse'){ score = 0.9; }
     else if (t.historic){ score = 0.8; }
     else if (t.natural){ natural = true; }
-    return { name:t['name:en'] || t.name, lat, lon, score, natural, kind };
+    return { ...bestOsmName(t), lat, lon, score, natural, kind };
   }).filter(l => l.name && l.lat != null);
 }
 // Time each download and count its bytes, so the info box can show which one is slow.
@@ -682,6 +736,8 @@ async function fetchWays(b, z, withRivers, onBytes){
     ? `[out:json][timeout:60];(way["highway"~"^(${cls})$"](${bb});way["waterway"="river"]${riverFilter}(${bb}););out geom;`
     : `[out:json][timeout:50];way["highway"~"^(${cls})$"](${bb});out geom;`;
   const ways = (await overpass(q, onBytes)).elements.filter(e => e.geometry && e.tags);
+  const named = ways.filter(w => w.tags.name).map(w => { const b = bestOsmName(w.tags); return { w, name:b.name }; });
+  await normalizeNames(named); named.forEach(o => o.w.tags.name = o.name);
   return { roads:ways.filter(w => w.tags.highway), rivers:ways.filter(w => w.tags.waterway === 'river'), withRivers };
 }
 
@@ -816,7 +872,7 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
 
   const nCities = Math.max(lockedT.length ? 0 : 1, Math.round(count/5) - lockedT.filter(t => t.kind === 'city').length);
   chosen.sort((a, b) => b.score - a.score);          // city status goes to the biggest, not the first placed
-  const fresh = chosen.map((c, i) => ({ id:newId(), name:c.name, x:c.x, y:c.y, kind:i < nCities ? 'city' : 'town', size:1, score:c.score, lat:c.lat, lon:c.lon }));
+  const fresh = chosen.map((c, i) => ({ id:newId(), name:c.name, x:c.x, y:c.y, kind:i < nCities ? 'city' : 'town', size:1, score:c.score, lat:c.lat, lon:c.lon, local:c.local, romanized:c.romanized }));
   const towns = [...locked, ...fresh];
   // The biggest new cities get 2 squares, like Emerald's larger cities
   fresh.filter(t => t.kind === 'city').slice(0, Math.ceil(nCities/2)).forEach(t => makeBig(t, towns, true));
@@ -839,13 +895,13 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
       if (isLm() >= nLm) break;
       // notable landmarks may sit right next to a town (just not on it); keep landmarks 3 apart from each other
       if (towns.every(o => footprint(o).every(f => cheb(f, l) >= (o.kind === 'landmark' ? 3 : 1))))
-        towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural, lat:l.lat, lon:l.lon });
+        towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural, lat:l.lat, lon:l.lon, local:l.local, romanized:l.romanized });
     }
     // 2) then leftover settlements
     for (const c of cands){
       if (isLm() >= nLm) break;
       if (!chosen.includes(c) && towns.every(o => footprint(o).every(f => cheb(f, c) >= 2)))
-        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score, lat:c.lat, lon:c.lon });
+        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score, lat:c.lat, lon:c.lon, local:c.local, romanized:c.romanized });
     }
   }
   return towns;
@@ -1432,7 +1488,7 @@ function showInfo(){
     const t = townById(sel.id), ll = toLatLng(t.x, t.y);
     const n = state.routes.filter(r => r.a === t.id || r.b === t.id).length;
     const kind = t.kind === 'city' && t.size === 2 ? 'Big city (2 squares)' : { city:'City', town:'Town', landmark:'Landmark' }[t.kind];
-    box.innerHTML = `${esc(t.name)}<small>${kind}${t.id === state.startId ? ' · Starting town' : ''}${t.locked ? ' · 🔒 Locked' : ''} · ${n} route${n === 1 ? '' : 's'}<br>Square (${t.x}, ${t.y})${elevText(t.x, t.y)} · ${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}</small>`;
+    box.innerHTML = `${esc(t.name)}<small>${kind}${t.id === state.startId ? ' · Starting town' : ''}${t.locked ? ' · 🔒 Locked' : ''} · ${n} route${n === 1 ? '' : 's'}<br>Square (${t.x}, ${t.y})${elevText(t.x, t.y)} · ${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}${t.local ? `<br>Local name: ${esc(t.local)}${t.romanized ? ' (no English name found, so romanized automatically: RENAME if it reads oddly)' : ''}` : ''}</small>`;
     actionBtn(t.locked ? 'UNLOCK' : 'LOCK', () => { t.locked = !t.locked; });
     actionBtn('RENAME', async () => { const v = await askText('New name:', t.name); if (v) t.name = v.trim(); });
     actionBtn('SIZE', () => {      // city → big city → town → landmark → city
@@ -1682,6 +1738,7 @@ async function forge(opts = {}){
 
     setProgress(92, 'route', '');
     await new Promise(r => setTimeout(r, 30));     // let the bar paint before the heavy work
+    await normalizeNames([...places, ...landmarks]);
     computeNameMaps(app && app.named, landmarks);
     state.source = { places, landmarks }; state.variant = opts.variant || 0;     // kept so REROLL needs no new downloads
     state.towns = pickTowns(places, +$('townCount').value, $('landmarks').checked, landmarks, { variant:state.variant });
@@ -2109,8 +2166,8 @@ function serialize(){
     towns:state.towns, routes:state.routes.map(r => ({ a:r.a, b:r.b, name:r.name, custom:!!r.custom })),
     startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant || 0, notes:state.notes,
     regionName:state.regionName, regionNameCustom:!!state.regionNameCustom,
-    source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '']),
-                            landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '']) } : null,
+    source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '', p.local || '', p.romanized ? 1 : 0]),
+                            landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '', l.local || '', l.romanized ? 1 : 0]) } : null,
     ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value, theme:$('theme').value,
          extraCount:+$('extraCount').value, landmarks:$('landmarks').checked }
   };
@@ -2125,8 +2182,8 @@ function deserialize(o){
       roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(MW*MH), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []),
       names:n ? { lake:new Map(n.lake), sea:new Map(n.sea), range:new Map(n.range), land:new Map(n.land), peaks:n.peaks } : null,
       gen:o.gen, notes:o.notes || [], timings:{},
-      source:o.source ? { places:o.source.places.map(([name, lat, lon, pop, place, capital]) => ({ name, lat, lon, pop, place, capital })),
-                          landmarks:o.source.landmarks.map(([name, lat, lon, score, natural, kind]) => ({ name, lat, lon, score, natural:!!natural, kind })) } : null }
+      source:o.source ? { places:o.source.places.map(([name, lat, lon, pop, place, capital, local, rom]) => ({ name, lat, lon, pop, place, capital, local:local || undefined, romanized:!!rom })),
+                          landmarks:o.source.landmarks.map(([name, lat, lon, score, natural, kind, local, rom]) => ({ name, lat, lon, score, natural:!!natural, kind, local:local || undefined, romanized:!!rom })) } : null }
   };
 }
 
@@ -2390,7 +2447,9 @@ const EM_ABBR = [[/\bMOUNT\b/, 'MT.'], [/\bSAINT\b/, 'ST.'], [/\bFORT\b/, 'FT.']
   [/\bPLAIN\b/, 'PLN.'], [/\bUPPER\b/, 'UPR.'], [/\bLOWER\b/, 'LWR.'], [/\bSUMMIT\b/, 'SMT.'], [/\bMEADOWS\b/, 'MDWS.'],
   [/\bTOWN\b/, 'TN.'], [/\bCITY\b/, 'CY.']];
 function emName(name){
-  let s = String(name).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9 .'\-]/g, '').replace(/\s+/g, ' ').trim() || 'UNNAMED';
+  let raw = String(name);
+  if (hasNonLatin(raw)) raw = cleanName(raw).name;      // romanize (the export loads the romanizer first) instead of losing the name
+  let s = raw.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9 .'\-]/g, '').replace(/\s+/g, ' ').trim() || 'UNNAMED';
   for (const [re, ab] of EM_ABBR){ if (s.length <= EM_NAME_MAX) break; s = s.replace(re, ab); }
   if (s.length <= EM_NAME_MAX) return s;
   const cut = s.lastIndexOf(' ', EM_NAME_MAX);              // still too long: end at a whole word if that keeps enough
@@ -2538,6 +2597,8 @@ function zipStore(files){                              // files: [{ name, bytes 
 async function exportPokeemerald(){
   if (!state.terrain){ setStatus('Forge a region first.'); return; }
   let plan;
+  const allNames = [...state.towns.map(t => t.name), ...state.routes.map(r => r.name || '')];
+  if (allNames.some(n => hasNonLatin(n) && !latinPart(n))) await loadRomanizer().catch(() => {});
   try { plan = emeraldPlan(); } catch (e){ setStatus('Can\'t export: ' + e.message); return; }
   setStatus('Building pokeemerald files…');
   let script;
