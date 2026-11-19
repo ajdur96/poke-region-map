@@ -18,6 +18,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 - **Terrain:** coastlines and lakes from OpenStreetMap tiles (bundled lake outlines as a fallback); hills, mountains and peaks from Terrarium elevation tiles (measured relative to the region's lowlands).
 - **Roads and rivers:** from the bundled Natural Earth data, so they load in a fraction of a second. Road detail follows frame width: major highways only from 150 km, plus secondary highways from 50 km, all mapped roads below that.
 - **Towns:** Natural Earth cities (with populations) and GeoNames towns over 1,000 people, ranked and spaced out. The biggest cities take 2 squares. When the bundled towns are thin or the frame is zoomed in, Wikidata (towns, suburbs, hills, dams and parks with English names, usually about a second) and OpenStreetMap (villages and neighborhoods, 8–15 second limit) fill the gaps. If there still aren't enough towns, extra towns take the names of nearby real features (a hill or a dam, say) and if real names still run out, the map simply has fewer towns (no made-up placeholders).
+- **Land cover:** forests, wetlands, deserts, snow and dry grassland from the [Esri / Impact Observatory Sentinel-2 10 m land cover](https://livingatlas.arcgis.com/landcover/) map, sampled for the frame like the map tiles. Snow also follows a latitude-based snowline on mountains. Without the service, named deserts from the bundled data are used. Cover changes the look, the square's description and route names ("Whispering Woods", "Misty Marsh"), but not routing.
 - **Landmarks:** bundled mountain peaks and named lakes, plus Wikidata and OSM parks, hills and attractions when available. Add your own with **+ LANDMARK**; it gets a short route from the nearest town.
 - **Routes:** a minimum spanning tree plus optional shortcuts. Every landmark is connected too: landmarks near a route are moved onto it, and any others get a short spur route from the nearest town. Each route is pathed with A* that prefers real roads, avoids mountains, can cross water (sea routes) and penalises turns. Numbered from Route 101 outward (Hoenn style) from the starting town.
 - **Route style:** a straight ↔ bendy slider. Straight makes turns expensive so routes run in long lines; bendy makes turns cheap, pulls routes onto real roads harder, and adds a gentle random wander. Changes apply instantly.
@@ -78,6 +79,7 @@ Names are shown in Latin letters. The forge first uses OpenStreetMap's English o
 - Elevation: [Terrarium tiles](https://registry.opendata.aws/terrain-tiles/) (AWS Open Data)
 - Place search: Nominatim
 - Extra towns and landmarks: [Wikidata](https://www.wikidata.org) (CC0)
+- Land cover: Esri / Impact Observatory / Microsoft Sentinel-2 10 m Land Use/Land Cover (CC BY 4.0)
 - Romanization: [any-ascii](https://github.com/anyascii/anyascii) (ISC), in `vendor/any-ascii.js`, loaded only when a region needs it
 
 ### Rebuilding the bundled data

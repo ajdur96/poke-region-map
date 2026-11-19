@@ -177,7 +177,7 @@
   <p class="hint" style="text-align:center">Data: <a href="https://www.naturalearthdata.com" style="color:inherit">Natural Earth</a> (public domain) ·
     <a href="https://www.geonames.org" style="color:inherit">GeoNames</a> (CC BY 4.0) ·
     © <a href="https://www.openstreetmap.org/copyright" style="color:inherit">OpenStreetMap</a> contributors ·
-    elevation: <a href="https://registry.opendata.aws/terrain-tiles/" style="color:inherit">Terrain Tiles</a></p>
+    elevation: <a href="https://registry.opendata.aws/terrain-tiles/" style="color:inherit">Terrain Tiles</a> · land cover: <a href="https://livingatlas.arcgis.com/landcover/" style="color:inherit">Esri / Impact Observatory</a> (CC BY 4.0)</p>
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -187,12 +187,17 @@
 // terrain sub-cells (2 px each) so coastlines and mountains still look smooth.
 const MW = 28, MH = 15, TILE = 8, SUB = 4, SW = MW*SUB, SH = MH*SUB, SP = TILE/SUB;
 const T = { SEA:0, LAND:1, HILL:2, MTN:3, PEAK:4 };
+// Land cover sits on top of the relief (a forested hill is still a hill for routing); it only changes the look and names
+const C = { NONE:0, FOREST:1, WETLAND:2, DESERT:3, SNOW:4, DRY:5 };
+const COVER_NAMES = ['', 'forest', 'wetland', 'desert', 'snow', 'dry grassland'];
 const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1];
 const PAL = {
   deep:'#3098c0', deep2:'#48b0d8', mid:'#50b8e0', shallow:'#90dcf0', foam:'#d0f4f8',
   landEdge:'#287830', land1:'#60b040', land2:'#78c850', land3:'#90d460',
   hill:'#a8d470', hillHi:'#c8e890', mtn:'#b08850', mtnHi:'#d8b070', mtnLo:'#7a5a30',
   peak:'#f0f0f0', peakLo:'#b8c0d0', river:'#68c8e8',
+  forest:'#388840', forestHi:'#58a850', forestLo:'#246830', marsh:'#70b090', marshHi:'#58a0c0', marshLo:'#4c9070',
+  sand:'#e4d098', sandHi:'#f0e0b0', sandLo:'#ccb688', snow:'#e8f0f8', snowLo:'#b8c8dc', dry:'#a8c860', dry2:'#b8d070',
   rOut:'#b87020', rFill:'#f8b048', rSel:'#fff070', sOut:'#3880b0', sFill:'#b8ecf8',
   tOut:'#701818', tFill:'#e04040', tHi:'#ff9898', cOut:'#601010', cFill:'#d83030', cHi:'#ff8080',
   lOut:'#203088', lFill:'#4868d8', lHi:'#a0b8ff'
@@ -218,7 +223,7 @@ const TOOL_HINTS = {
   land:'Drag to paint land.', sea:'Drag to paint water.', mountain:'Drag to raise mountains.'
 };
 
-const state = { terrain:null, elev:null, lake:null, sq:null, sqElev:null,
+const state = { terrain:null, cover:null, elev:null, lake:null, sq:null, sqElev:null,
   roadSq:new Float32Array(MW*MH), roadEdges:new Set(), river:null, riverNames:new Map(), gen:null, towns:[], routes:[],
   startId:null, sel:null, cursor:{x:0, y:0}, tool:'inspect', linkFrom:null, nextId:1, seed:0, ver:0, notes:[] };
 
@@ -382,6 +387,86 @@ async function fetchMosaic(b, urlFn, minW, maxW, maxZ, tracker){
   let data = null;
   if (ok) try { data = octx.getImageData(0, 0, pw, ph).data; } catch (e) { data = null; }
   return { z, p1, pw, ph, data };
+}
+
+// Land cover: Esri / Impact Observatory Sentinel-2 10 m land cover, drawn for exactly the same Web Mercator
+// pixel window as the OSM mosaic, so sampleSub() reads it the same way. Colours are the service's own legend.
+const LC_URL = 'https://ic.imagery1.arcgis.com/arcgis/rest/services/Sentinel2_10m_LandCover/ImageServer/exportImage';
+const LC_COLORS = [[0x35,0x82,0x21, C.FOREST], [0x87,0xd1,0x9e, C.WETLAND], [0xed,0xe9,0xe4, C.DESERT],
+                   [0xf2,0xfa,0xff, C.SNOW], [0xef,0xcf,0xa8, C.DRY]];
+async function fetchLandcover(b, tracker){
+  const nw = L.latLng(b.n, b.w), se = L.latLng(b.s, b.e);
+  let z = 18; while (z > 1 && map.project(se, z).x - map.project(nw, z).x > 900) z--;
+  const p1 = map.project(nw, z), p2 = map.project(se, z);
+  const pw = Math.ceil(p2.x - p1.x), ph = Math.ceil(p2.y - p1.y), R = 6378137, m = 2*Math.PI*R/(256*2**z);
+  const bbox = [p1.x*m - Math.PI*R, Math.PI*R - p2.y*m, p2.x*m - Math.PI*R, Math.PI*R - p1.y*m].map(v => v.toFixed(1)).join(',');
+  const url = `${LC_URL}?bbox=${bbox}&bboxSR=3857&imageSR=3857&size=${pw},${ph}&format=png&f=image&interpolation=RSP_NearestNeighbor`
+    + '&renderingRule=' + encodeURIComponent(JSON.stringify({ rasterFunction:'Cartographic Renderer for Visualization and Analysis' }));
+  if (tracker) tracker.total++;
+  try {
+    const img = await loadImg(url);
+    const off = document.createElement('canvas'); off.width = pw; off.height = ph;
+    const octx = off.getContext('2d', { willReadFrequently:true }); octx.drawImage(img, 0, 0, pw, ph);
+    return { z, p1, pw, ph, data:octx.getImageData(0, 0, pw, ph).data };
+  } catch (e){ return { z, p1, pw, ph, data:null }; }
+  finally { if (tracker){ tracker.done++; tracker.onTick(); } }
+}
+const lcClass = (r, g, b) => {
+  for (const [cr, cg, cb, k] of LC_COLORS) if (Math.abs(r - cr) + Math.abs(g - cg) + Math.abs(b - cb) < 18) return k;
+  return 0;
+};
+// One cover class per sub-cell (majority of its 16 samples); dry grassland only where it clearly dominates
+function buildCover(lc, deserts){
+  const terr = state.terrain, cover = new Uint8Array(SW*SH);
+  if (lc && lc.data){
+    for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
+      const i = sy*SW + sx; if (terr[i] === T.SEA) continue;
+      let best = 0, bestN = 0;
+      for (const k of [C.FOREST, C.WETLAND, C.DESERT, C.SNOW, C.DRY]){
+        const n = sampleSub(lc, sx, sy, (r, g, b) => lcClass(r, g, b) === k ? 1 : 0);
+        if (n > bestN){ bestN = n; best = k; }
+      }
+      if (bestN >= (best === C.DRY ? 0.6 : 0.4)) cover[i] = best;
+    }
+  } else {
+    // Fallback without the land cover service: named deserts from the bundled data, snow above a latitude snowline
+    for (const poly of deserts || []){
+      const pts = poly.map(p => { const f = toSqF(p.lat, p.lon); return { x:f.x*SUB, y:f.y*SUB }; });
+      for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
+        const px0 = sx + .5, py0 = sy + .5; let inside = false;
+        for (let a = 0, c = pts.length-1; a < pts.length; c = a++){
+          const A = pts[a], B = pts[c];
+          if ((A.y > py0) !== (B.y > py0) && px0 < (B.x - A.x)*(py0 - A.y)/(B.y - A.y) + A.x) inside = !inside;
+        }
+        if (inside && terr[sy*SW+sx] !== T.SEA) cover[sy*SW+sx] = C.DESERT;
+      }
+    }
+  }
+  if (state.elev){                                   // permanent snow also follows the snowline (≈5000 m in the tropics, sea level near the poles)
+    const lat = Math.abs(toLatLng(MW/2, MH/2).lat), line = Math.max(0, 5200 - Math.max(0, lat - 20)*104);
+    for (let i = 0; i < SW*SH; i++) if (terr[i] !== T.SEA && state.elev[i] > line && terr[i] >= T.MTN) cover[i] = C.SNOW;
+  }
+  // tidy specks: a lone sub-cell takes its neighbours' cover, so patches read as pixel-art blobs
+  const copy = cover.slice();
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
+    const i = y*SW + x; if (terr[i] === T.SEA) continue;
+    const cnt = {};
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+      if ((!dx && !dy) || !inSub(x+dx, y+dy)) continue;
+      const v = copy[(y+dy)*SW + x+dx]; cnt[v] = (cnt[v] || 0) + 1;
+    }
+    const [v, n] = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+    if (n >= 6 && +v !== copy[i]) cover[i] = +v;
+  }
+  state.cover = cover;
+}
+// The cover class that fills most of a 28×15 square
+function sqCover(x, y){
+  if (!state.cover) return 0;
+  const cnt = [0, 0, 0, 0, 0, 0];
+  for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) cnt[state.cover[(y*SUB+sy)*SW + x*SUB+sx]]++;
+  let best = 0; for (let k = 1; k < cnt.length; k++) if (cnt[k] > cnt[best]) best = k;
+  return cnt[best] >= 6 ? best : 0;
 }
 
 // Average a function over the mosaic pixels that fall inside sub-cell (sx, sy)
@@ -1140,7 +1225,12 @@ const TERRAIN_WORDS = {
   hills:{ plain:'Foothills', flavor:['Rolling Hills', 'Windy Foothills'] },
   shore:{ plain:'Shoreline', flavor:['Seabreeze Path', 'Tidepool Trail'] },
   water:{ plain:'Waters',    flavor:['Open Waters', 'Wavecrest Route'] },
-  flats:{ plain:'Flats',     flavor:['Windswept Flats', 'Sunlit Meadows'] }
+  flats:{ plain:'Flats',     flavor:['Windswept Flats', 'Sunlit Meadows'] },
+  forest:{ plain:'Woods',    flavor:['Whispering Woods', 'Shady Forest'] },
+  wetland:{ plain:'Marsh',   flavor:['Misty Marsh', 'Reedy Wetlands'] },
+  desert:{ plain:'Desert',   flavor:['Sandstorm Trail', 'Dune Path'] },
+  snow:{ plain:'Snowfield',  flavor:['Frosty Trail', 'Icy Path'] },
+  dry:{ plain:'Plains',      flavor:['Golden Plains', 'Savanna Trail'] }
 };
 const ROAD_WORDS = /\b(road|highway|freeway|parkway|corridor|expressway|turnpike|way|avenue|street|boulevard|trail)$/i;
 const baseName = n => n.replace(/\s+(river|creek|stream)$/i, '');
@@ -1196,11 +1286,12 @@ function routeCandidates(sqs){
 }
 
 function terrainName(sqs, pick, flavor){
-  const n = sqs.length, cnt = { ridge:0, hills:0, shore:0, water:0, flats:0 }, land = {};
+  const n = sqs.length, cnt = { ridge:0, hills:0, shore:0, water:0, flats:0, forest:0, wetland:0, desert:0, snow:0, dry:0 }, land = {};
   sqs.forEach(s => {
     const k = sqKind(s.x, s.y);
     let coastal = false; for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) if (inSq(s.x+dx, s.y+dy) && sqKind(s.x+dx, s.y+dy) === 'water') coastal = true;
-    cnt[k === 'mountain' ? 'ridge' : k === 'hill' ? 'hills' : k === 'water' ? 'water' : coastal ? 'shore' : 'flats']++;
+    const cov = k === 'water' ? 0 : sqCover(s.x, s.y), ck = [null, 'forest', 'wetland', 'desert', 'snow', 'dry'][cov];
+    cnt[k === 'water' ? 'water' : ck && (k !== 'mountain' || cov === C.SNOW) ? ck : k === 'mountain' ? 'ridge' : k === 'hill' ? 'hills' : coastal ? 'shore' : 'flats']++;
     const r = state.names?.land.get(s.y*MW + s.x); if (r) land[r.name] = (land[r.name]||0) + 1;
   });
   const word = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0], W = TERRAIN_WORDS[word];
@@ -1320,6 +1411,28 @@ function buildStatic(){
         spx(X, Y, SP, SP, d <= 1 ? PAL.shallow : d <= 3 ? PAL.mid : PAL.deep);
         if (d >= 4 && h > 0.9) anim.dashes.push([X, Y+1, phase]);             // open-sea swell dashes
         if (d === 1) anim.foam.push([X + (h > .5 ? 1 : 0), Y, phase]);         // shoreline sparkle spots
+      }
+    } else if (state.cover && state.cover[i] && v !== T.PEAK && !(v === T.MTN && state.cover[i] !== C.SNOW)){
+      // land cover over flat land and hills; on mountains only snow shows
+      const c = state.cover[i], h = hash(sx, sy), cv2 = (dx, dy) => inSub(sx+dx, sy+dy) ? state.cover[(sy+dy)*SW + sx+dx] : c;
+      if (c === C.FOREST){
+        spx(X, Y, SP, SP, PAL.forest);
+        if ((sx + 2*sy) % 4 === 0) spx(X, Y, 1, 1, PAL.forestHi);                  // tree-top dots
+        if (cv2(0, 1) !== C.FOREST) spx(X, Y+SP-1, SP, 1, PAL.forestLo);            // shadowed forest edge
+      } else if (c === C.WETLAND){
+        spx(X, Y, SP, SP, PAL.marsh);
+        if (sy % 2 === 0 && (sx + (sy >> 1)) % 3 === 0) spx(X, Y, SP, 1, PAL.marshHi);   // pools between reeds
+        else if (h > 0.8) spx(X+1, Y, 1, 1, PAL.marshLo);
+      } else if (c === C.DESERT){
+        spx(X, Y, SP, SP, v === T.HILL ? PAL.sandLo : PAL.sand);
+        if (h > 0.82) spx(X, Y, 1, 1, PAL.sandHi); else if (h < 0.08) spx(X+1, Y+1, 1, 1, PAL.sandLo);
+      } else if (c === C.SNOW){
+        spx(X, Y, SP, SP, PAL.snow);
+        if (v >= T.HILL && cv2(0, 1) !== C.SNOW) spx(X, Y+SP-1, SP, 1, PAL.snowLo);
+        else if (h > 0.9) spx(X, Y, 1, 1, PAL.snowLo);
+      } else {                                                                     // dry grassland: a yellower green
+        const blob = hash(sx >> 3, sy >> 3) > 0.55;
+        spx(X, Y, SP, SP, v === T.HILL ? PAL.hill : blob ? PAL.dry2 : PAL.dry);
       }
     } else if (v === T.LAND){
       const blob = hash(sx >> 3, sy >> 3) > 0.55;
@@ -1452,7 +1565,7 @@ function bracket(b){
 
 function render(){
   if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
-  const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.river), idOf(state.roadEdges),
+  const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.cover), idOf(state.river), idOf(state.roadEdges),
               $('showGrid').checked, $('showRivers').checked].join('|');
   if (sk !== staticKey){ buildStatic(); staticKey = sk; }
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
@@ -1555,7 +1668,11 @@ function showInfo(){
   if (sel && sel.type === 'cell'){
     const k = sqKind(sel.x, sel.y), ll = toLatLng(sel.x, sel.y);
     const midSub = (sel.y*SUB + 2)*SW + sel.x*SUB + 2;
-    const label = k === 'water' ? (state.lake[midSub] ? 'Lake' : 'Open Sea') : { land:'Wilderness', hill:'Hills', mountain:'Mountains' }[k];
+    const cov = k === 'water' ? 0 : sqCover(sel.x, sel.y);
+    const covLabel = ['', 'Forest', 'Wetland', 'Desert', 'Snowfield', 'Grassland'][cov];
+    const label = k === 'water' ? (state.lake[midSub] ? 'Lake' : 'Open Sea')
+      : cov && (k !== 'mountain' || cov === C.SNOW) ? (k === 'hill' ? covLabel + ' Hills' : k === 'mountain' ? 'Snowy Mountains' : covLabel)
+      : { land:'Wilderness', hill:'Hills', mountain:'Mountains' }[k];
     const road = state.roadSq[sel.y*MW + sel.x] > 0 ? ' · Real road here' : '';
     const rv = state.riverNames.get(sel.y*MW + sel.x);
     box.innerHTML = `${label}<small>Square (${sel.x}, ${sel.y})${elevText(sel.x, sel.y)}${road}${rv ? ' · ' + esc(rv) : ''}<br>${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}</small>`;
@@ -1597,7 +1714,7 @@ function routeAt(c){
 function paint(c){
   const v = state.tool === 'land' ? T.LAND : state.tool === 'sea' ? T.SEA : T.MTN;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
-    if (inSub(c.sx+dx, c.sy+dy)) state.terrain[(c.sy+dy)*SW + c.sx+dx] = v;
+    if (inSub(c.sx+dx, c.sy+dy)){ state.terrain[(c.sy+dy)*SW + c.sx+dx] = v; if (state.cover) state.cover[(c.sy+dy)*SW + c.sx+dx] = 0; }
   derive(); render();
 }
 
@@ -1729,7 +1846,7 @@ function endProgress(){ $('progress').style.display = 'none'; $('progressFill').
 
 // Wipe the previous region so old towns never mix with the new one
 function clearRegion(){
-  Object.assign(state, { terrain:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
+  Object.assign(state, { terrain:null, cover:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
     roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{}, source:null, variant:0,
     regionName:'', regionNameCustom:false });
@@ -1750,16 +1867,19 @@ async function forge(opts = {}){
 
     const tiles = { done:0, total:0, onTick(){ setProgress(2 + 43*this.done/Math.max(1, this.total), null, `${this.done}/${this.total} tiles`); } };
     let bytes = 0; const onBytes = n => { bytes += n; };
-    const [osm, dem, stat] = await Promise.all([
+    const [osm, dem, stat, lc] = await Promise.all([
       fetchMosaic(b, (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, 600, 1600, 16, tiles),
       fetchMosaic(b, (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`, 300, 900, 13, tiles),
-      timed('map data', ob => loadStatic(b, ob, tiles), onBytes).catch(() => null)
+      timed('map data', ob => loadStatic(b, ob, tiles), onBytes).catch(() => null),
+      fetchLandcover(b, tiles)
     ]);
     if (!dem.data) state.notes.push('Elevation unavailable — no mountains.');
     state.gen = makeGen(b, osm.z);
     const app = stat ? staticToApp(stat, b) : null;
     if (!osm.data) state.notes.push(app ? 'Map tiles unreadable — lakes from bundled data.' : 'Couldn\'t read water from map tiles.');
     buildTerrain(osm, dem, app ? app.lakes : []);
+    buildCover(lc, app ? app.named.regions.filter(r => r.kind === 'desert').map(r => r.pts) : []);
+    if (!lc.data) state.notes.push('Land cover unavailable — forests and wetlands not shown.');
     render(); startReveal('terrain');              // show the new terrain (sweeping in) while towns load
 
     // Roads and rivers come straight from the bundled data: no waiting on Overpass.
@@ -2173,7 +2293,7 @@ const UNDO_LIMIT = 50, SAVE_KEY = 'regionMapForge.region.v1';
 let undoStack = [], redoStack = [];
 function takeSnap(over = {}){
   return {
-    terrain:state.terrain.slice(), towns:structuredClone(state.towns), routes:structuredClone(state.routes),
+    terrain:state.terrain.slice(), cover:state.cover ? state.cover.slice() : null, towns:structuredClone(state.towns), routes:structuredClone(state.routes),
     startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant,
     regionName:state.regionName, regionNameCustom:state.regionNameCustom,
     flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
@@ -2183,7 +2303,7 @@ function takeSnap(over = {}){
 }
 function applySnap(sn){
   Object.assign(state, sn.shared);
-  Object.assign(state, { terrain:sn.terrain.slice(), towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
+  Object.assign(state, { terrain:sn.terrain.slice(), cover:sn.cover ? sn.cover.slice() : null, towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
     startId:sn.startId, nextId:sn.nextId, seed:sn.seed, variant:sn.variant || 0, sel:null, linkFrom:null,
     regionName:sn.regionName || '', regionNameCustom:!!sn.regionNameCustom });
   if (!state.regionName) suggestRegionName();
@@ -2224,7 +2344,7 @@ function serialize(){
   const g = state.gen, c = g.b.corners, ll = p => ({ lat:p.lat, lng:p.lng }), n = state.names;
   return {
     format:'regionMapForge-editor/1', savedAt:new Date().toISOString(),
-    terrain:toB64(state.terrain), elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
+    terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
     riverNames:[...state.riverNames], roadSq:f32ToB64(state.roadSq), roadEdges:[...state.roadEdges], roadEdgeName:[...(state.roadEdgeName || [])],
     names:n ? { lake:[...n.lake], sea:[...n.sea], range:[...n.range], land:[...n.land].map(([k, v]) => [k, { name:v.name, kind:v.kind }]), peaks:n.peaks } : null,
     gen:{ z:g.z, o:g.o, ex:g.ex, ey:g.ey, det:g.det, b:{ ...g.b, corners:{ tl:ll(c.tl), tr:ll(c.tr), bl:ll(c.bl), br:ll(c.br) } } },
@@ -2240,7 +2360,7 @@ function serialize(){
 function deserialize(o){
   const n = o.names;
   return {
-    terrain:fromB64(o.terrain), towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
+    terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
     regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
     flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
     shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),

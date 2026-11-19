@@ -171,7 +171,20 @@ function demoTerrain(rng, used){
     const name = demoWord(rng, used) + ' River'; made++;
     for (const p of path) if (terr[p] < T.MTN){ river[p] = 1; names.set(Math.floor(((p/SW) | 0)/SUB)*MW + Math.floor((p % SW)/SUB), name); }
   }
-  state.terrain = terr; state.elev = elev; state.river = river; state.riverNames = names;
+  // Land cover from a second "moisture" field: forests where wet, marsh on wet lowlands, desert where dry, snow up high
+  const wet = value2(rng), moist = (x, y) => (wet(x/18, y/18)*.7 + wet(x/7 + 9, y/7 + 9)*.3), dryShift = rng()*.12;
+  const cover = new Uint8Array(SW*SH);
+  for (let i = 0; i < SW*SH; i++){
+    if (terr[i] === T.SEA) continue;
+    const x = i % SW, y = (i/SW) | 0, m = moist(x, y) - dryShift;
+    if (terr[i] >= T.MTN && elev[i] > 1900) cover[i] = C.SNOW;
+    else if (terr[i] >= T.MTN) continue;
+    else if (m > .62 && elev[i] < 260 && terr[i] === T.LAND) cover[i] = C.WETLAND;
+    else if (m > .55) cover[i] = C.FOREST;
+    else if (m < .22) cover[i] = C.DESERT;
+    else if (m < .3) cover[i] = C.DRY;
+  }
+  state.terrain = terr; state.cover = cover; state.elev = elev; state.river = river; state.riverNames = names;
   derive();
 }
 
