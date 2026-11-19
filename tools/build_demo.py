@@ -184,7 +184,12 @@ function demoTerrain(rng, used){
     else if (m < .22) cover[i] = C.DESERT;
     else if (m < .3) cover[i] = C.DRY;
   }
-  state.terrain = terr; state.cover = cover; state.elev = elev; state.river = river; state.riverNames = names;
+  // A made-up climate to match: deserts are hot deserts, snow and peaks are tundra, wet forests are humid subtropical…
+  const climate = new Uint8Array(SW*SH);
+  for (let i = 0; i < SW*SH; i++) if (terr[i] !== T.SEA)
+    climate[i] = cover[i] === C.DESERT ? 7 : cover[i] === C.DRY ? 6 : cover[i] === C.SNOW || terr[i] === T.PEAK ? 31
+      : cover[i] === C.WETLAND ? 1 : cover[i] === C.FOREST ? 9 : 10;
+  state.terrain = terr; state.cover = cover; state.climate = climate; state.elev = elev; state.river = river; state.riverNames = names;
   derive();
 }
 

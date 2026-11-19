@@ -5,7 +5,10 @@ Tested against pret/pokeemerald and rh-hideout/pokeemerald-expansion (master and
 project's own gbagfx (and expansion's compresSmol) on the installed files.
 
 Usage:
-    python apply_to_pokeemerald.py /path/to/pokeemerald
+    python apply_to_pokeemerald.py /path/to/pokeemerald [--weather]
+
+    --weather   also set the suggested weather on the outdoor maps (routes, towns, cities) in each of
+                your region's map sections (the "weather" field of data/maps/*/map.json). Off by default.
 
 Run it from the unzipped export folder (it reads region_export.json and the graphics/ folder next to it).
 
@@ -39,10 +42,13 @@ def backup(path):
 
 
 def main():
-    if len(sys.argv) != 2:
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    flags = {a for a in sys.argv[1:] if a.startswith('--')}
+    if len(args) != 1 or flags - {'--weather'}:
         print(__doc__)
         sys.exit(1)
-    root = os.path.abspath(sys.argv[1])
+    root = os.path.abspath(args[0])
+    want_weather = '--weather' in flags
     exp_path = os.path.join(HERE, 'region_export.json')
     if not os.path.exists(exp_path):
         fail('region_export.json not found next to this script. Run it from the unzipped export folder.')
@@ -109,6 +115,30 @@ def main():
     else:
         tiles_msg = f'could not find -num_tiles for map.png; set it to {n} by hand where map.png is converted'
 
+    # ---- optional: weather on every map that belongs to one of the region's sections ----
+    weather_msg = None
+    if want_weather:
+        want = {e['id']: e.get('weather') for e in exp['sections'] if e.get('weather')}
+        changed = 0
+        maps_dir = os.path.join(root, 'data', 'maps')
+        for d in sorted(os.listdir(maps_dir)) if os.path.isdir(maps_dir) else []:
+            mp = os.path.join(maps_dir, d, 'map.json')
+            if not os.path.exists(mp):
+                continue
+            text = open(mp, encoding='utf-8').read()
+            sec = re.search(r'"region_map_section"\s*:\s*"(\w+)"', text)
+            if not sec or sec.group(1) not in want:
+                continue
+            mt = re.search(r'"map_type"\s*:\s*"(\w+)"', text)      # outdoor maps only: no rain inside the Pokemon Center
+            if not mt or mt.group(1) not in ('MAP_TYPE_ROUTE', 'MAP_TYPE_TOWN', 'MAP_TYPE_CITY', 'MAP_TYPE_OCEAN_ROUTE'):
+                continue
+            new = re.sub(r'("weather"\s*:\s*")\w+(")', lambda mm: mm.group(1) + want[sec.group(1)] + mm.group(2), text, count=1)
+            if new != text:
+                backup(mp)
+                open(mp, 'w', encoding='utf-8').write(new)
+                changed += 1
+        weather_msg = f'weather set on {changed} maps (data/maps/*/map.json)'
+
     print(f'Applied "{exp["regionName"]}" to {root}')
     print(f'  {len(exp["sections"])} map sections renamed/moved ({sum(1 for e in exp["sections"] if e["kind"] == "town")} towns, '
           f'{sum(1 for e in exp["sections"] if e["kind"] == "route")} routes, {sum(1 for e in exp["sections"] if e["kind"] == "landmark")} landmarks)')
@@ -118,6 +148,8 @@ def main():
         print('  names shortened to fit 16 characters:')
         for s in exp['shortenedNames']:
             print(f'    {s["from"]}  ->  {s["to"]}')
+    if weather_msg:
+        print('  ' + weather_msg)
     print('Backups: *.forge-backup next to each changed file.')
     print('Next: run `make`. Unused Hoenn sections keep their old names and positions; they just are not on the map.')
 
