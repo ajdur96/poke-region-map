@@ -143,6 +143,7 @@
     <div class="tools">
       <button data-tool="inspect" class="on">INSPECT</button>
       <button data-tool="add">+ TOWN</button>
+      <button data-tool="addlm">+ LANDMARK</button>
       <button data-tool="delete">DELETE</button>
       <button data-tool="link">LINK</button>
       <button data-tool="land">LAND</button>
@@ -710,6 +711,52 @@ async function fetchLandmarks(b, onBytes, deadline){
     return { ...bestOsmName(t), lat, lon, score, natural, kind };
   }).filter(l => l.name && l.lat != null);
 }
+// Wikidata: towns, suburbs, hills, dams, parks… with English names, in one quick query. Fills the gaps
+// GeoNames leaves (it drops most places without a population figure, e.g. much of Africa and Asia),
+// and answers in about a second where Overpass often times out.
+const WD_PLACE = /\b(city|town|village|hamlet|settlement|suburb|neighbou?rhood|township|locality|quarter|populated place|main place|sub-?place|census-designated place|unincorporated community|commune|kampung|desa|barangay|mahalle|urban area)\b/i;
+const WD_NATURAL = /\b(mountain|hill|peak|summit|volcano|ridge|massif|lake|reservoir|dam|waterfall|island|cape|headland|bay|lagoon|canyon|gorge|valley|mountain pass|plateau|national park|nature reserve|game reserve|protected area|forest|beach|dune|desert|crater|glacier|spring|cave)\b/i;
+const WD_CULTURE = /\b(museum|castle|fort|fortress|lighthouse|monument|archaeological site|heritage site|palace|temple|mosque|cathedral|monastery|ruins|zoo|botanical garden)\b/i;
+const WD_SKIP = /\b(school|church building|hotel|station|hospital|company|building|airport|street|road|business|shop|restaurant|office|cemetery|farm)\b/i;
+async function fetchWikidata(b, onBytes, deadline = Date.now() + 10000){
+  const q = `SELECT ?item ?name ?type ?c ?sl ?pop WHERE {
+    SERVICE wikibase:box { ?item wdt:P625 ?c.
+      bd:serviceParam wikibase:cornerSouthWest "Point(${b.w} ${b.s})"^^geo:wktLiteral.
+      bd:serviceParam wikibase:cornerNorthEast "Point(${b.e} ${b.n})"^^geo:wktLiteral. }
+    ?item rdfs:label ?name. FILTER(LANG(?name) = "en")
+    ?item wdt:P31 ?t. ?t rdfs:label ?type. FILTER(LANG(?type) = "en")
+    OPTIONAL { ?item wikibase:sitelinks ?sl. } OPTIONAL { ?item wdt:P1082 ?pop. }
+  } LIMIT 6000`;
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), Math.max(1500, deadline - Date.now()));
+  try {
+    const res = await fetch('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(q),
+      { signal:ctrl.signal, headers:{ Accept:'application/sparql-results+json' } });
+    if (!res.ok) throw new Error('Wikidata ' + res.status);
+    const rows = (await readJson(res, onBytes)).results.bindings;
+    const items = new Map();                          // one entry per item, with all its types
+    for (const r of rows){
+      const id = r.item.value, m = /Point\(([-\d.eE]+) ([-\d.eE]+)\)/.exec(r.c.value); if (!m) continue;
+      const it = items.get(id) || { name:r.name.value, lon:+m[1], lat:+m[2], types:[], sl:+(r.sl?.value || 0), pop:0 };
+      it.types.push(r.type.value); it.pop = Math.max(it.pop, +(r.pop?.value || 0) || 0); items.set(id, it);
+    }
+    const places = [], landmarks = [];
+    for (const it of items.values()){
+      const ty = it.types.join(', ');
+      if (/\b(municipality|ward \d+|province|district)\b/i.test(it.name)) continue;   // admin areas, not places
+      if (WD_SKIP.test(ty) && !WD_PLACE.test(ty) && !WD_NATURAL.test(ty)) continue;
+      if (WD_PLACE.test(ty)){
+        const tier = /\bcity\b/i.test(ty) ? 'city' : /\btown|township|municipality\b/i.test(ty) ? 'town'
+          : /suburb|neighbou?rhood|quarter|sub-?place/i.test(ty) ? 'suburb' : /hamlet/i.test(ty) ? 'hamlet' : 'village';
+        places.push({ name:it.name, lat:it.lat, lon:it.lon, place:tier, pop:it.pop, wdLinks:it.sl });
+      } else if (WD_NATURAL.test(ty) || (WD_CULTURE.test(ty) && it.sl > 0)){
+        const natural = WD_NATURAL.test(ty), kind = (ty.match(natural ? WD_NATURAL : WD_CULTURE) || [''])[0].toLowerCase();
+        landmarks.push({ name:it.name, lat:it.lat, lon:it.lon, natural, kind,
+          score:(natural ? 1 : 0.8) + Math.min(1.5, it.sl/10) + (/national park/.test(kind) ? 1 : 0) });
+      }
+    }
+    return { places, landmarks };
+  } finally { clearTimeout(t); }
+}
 // Time each download and count its bytes, so the info box can show which one is slow.
 async function timed(name, fn, onBytes){
   const rec = { s:0, mb:0 }, t0 = Date.now();
@@ -877,13 +924,33 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
   // The biggest new cities get 2 squares, like Emerald's larger cities
   fresh.filter(t => t.kind === 'city').slice(0, Math.ceil(nCities/2)).forEach(t => makeBig(t, towns, true));
 
+  // Not enough towns? Found towns at real named places that aren't settlements (a hill, a dam, a park),
+  // so the map keeps real names: "Katjieskop", like a town named after the mountain beside it.
+  const nTowns = () => towns.filter(t => t.kind !== 'landmark').length;
+  if (nTowns() < count){
+    const usedNames = new Set(towns.map(t => t.name));
+    const spots = landmarks.filter(l => l.name && !usedNames.has(l.name)).map(l => {
+      const f = toSqF(l.lat, l.lon); return { ...l, x:Math.floor(f.x), y:Math.floor(f.y) };
+    }).filter(c => inSq(c.x, c.y)).map(pullIn).map(c => ({ ...c, ...snapToLand(c) }))
+      .sort((a, b) => (b.natural - a.natural) || (b.score - a.score));
+    for (const pass of [true, false]) for (const c of spots){
+      if (nTowns() >= count) break;
+      if (usedNames.has(c.name) || sqKind(c.x, c.y) === 'water' || !gapOK(c, towns)) continue;
+      if (pass && !towns.every(o => footprint(o).every(f => dist(f, c) >= spacing*0.8))) continue;
+      usedNames.add(c.name);
+      towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'town', size:1, score:0, lat:c.lat, lon:c.lon,
+                   namedAfter:c.kind || (c.natural ? 'natural feature' : 'landmark'), local:c.local, romanized:c.romanized });
+    }
+  }
   let tries = 0, k = 1;
   while (towns.filter(t => t.kind !== 'landmark').length < count && tries++ < 800){
     const c = { x:1 + Math.floor(rng()*(MW-2)), y:1 + Math.floor(rng()*(MH-2)) };
     if (sqKind(c.x, c.y) === 'water' || !gapOK(c, towns) || !towns.every(o => footprint(o).every(f => dist(f, c) >= spacing*0.8))) continue;
     towns.push({ id:newId(), name:`Town ${k++}`, x:c.x, y:c.y, kind:'town', size:1, score:0 });
   }
-  if (k > 1) state.notes.push(`Only ${chosen.length + lockedT.length} named places fit this area — added ${k-1} placeholder town${k > 2 ? 's' : ''} ("Town #"). Try fewer towns or a bigger frame.`);
+  const nAfter = towns.filter(t => t.namedAfter && fresh.indexOf(t) < 0).length;
+  if (nAfter) state.notes.push(`${nAfter} town${nAfter > 1 ? 's are' : ' is'} named after nearby real features (hills, dams, parks), since too few towns were found.`);
+  if (k > 1) state.notes.push(`Only ${nTowns() - (k-1)} real names fit this area — added ${k-1} placeholder town${k > 2 ? 's' : ''} ("Town #"). Try fewer towns or a bigger frame.`);
   if (wantLandmarks){
     const nLm = Math.max(lockedL.length, Math.round(count/2));
     const isLm = () => towns.filter(t => t.kind === 'landmark').length;
@@ -961,7 +1028,7 @@ class MinHeap {
 }
 
 // How each route is drawn: A* over the 28x15 grid. Real road steps are cheap, mountains are
-// expensive, water is allowed (sea routes), and turning costs extra so paths stay straight like Gen 4.
+// expensive, water is allowed (sea routes), and turning costs extra so paths stay straight like the Gen 3 maps.
 const pathCache = new Map();
 function findPath(a, b){
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
@@ -1015,7 +1082,7 @@ function corners(sqs){
   out.push(sqs[sqs.length-1]); return out;
 }
 
-// Number routes 201, 202… outward from the starting town (game-progression order).
+// Number routes 101, 102… (Hoenn-style) outward from the starting town (game-progression order).
 function renumber(){
   state.routes = state.routes.filter(r => townById(r.a) && townById(r.b));
   let start = townById(state.startId);
@@ -1030,7 +1097,7 @@ function renumber(){
 // Journey order (used to give the earliest routes first pick of names, and in the export)
 function numberRoutes(start){
   const order = [start.id, ...state.towns.map(t => t.id).filter(id => id !== start.id)];
-  const visited = new Set(); let n = 201;
+  const visited = new Set(); let n = 101;
   for (const root of order){
     if (visited.has(root)) continue;
     const queue = [root]; visited.add(root);
@@ -1488,7 +1555,7 @@ function showInfo(){
     const t = townById(sel.id), ll = toLatLng(t.x, t.y);
     const n = state.routes.filter(r => r.a === t.id || r.b === t.id).length;
     const kind = t.kind === 'city' && t.size === 2 ? 'Big city (2 squares)' : { city:'City', town:'Town', landmark:'Landmark' }[t.kind];
-    box.innerHTML = `${esc(t.name)}<small>${kind}${t.id === state.startId ? ' · Starting town' : ''}${t.locked ? ' · 🔒 Locked' : ''} · ${n} route${n === 1 ? '' : 's'}<br>Square (${t.x}, ${t.y})${elevText(t.x, t.y)} · ${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}${t.local ? `<br>Local name: ${esc(t.local)}${t.romanized ? ' (no English name found, so romanized automatically: RENAME if it reads oddly)' : ''}` : ''}</small>`;
+    box.innerHTML = `${esc(t.name)}<small>${kind}${t.id === state.startId ? ' · Starting town' : ''}${t.locked ? ' · 🔒 Locked' : ''} · ${n} route${n === 1 ? '' : 's'}<br>Square (${t.x}, ${t.y})${elevText(t.x, t.y)} · ${ll.lat.toFixed(3)}, ${ll.lng.toFixed(3)}${t.namedAfter ? `<br>Named after a nearby ${esc(t.namedAfter)} (too few real towns here)` : ''}${t.local ? `<br>Local name: ${esc(t.local)}${t.romanized ? ' (no English name found, so romanized automatically: RENAME if it reads oddly)' : ''}` : ''}</small>`;
     actionBtn(t.locked ? 'UNLOCK' : 'LOCK', () => { t.locked = !t.locked; });
     actionBtn('RENAME', async () => { const v = await askText('New name:', t.name); if (v) t.name = v.trim(); });
     actionBtn('SIZE', () => {      // city → big city → town → landmark → city
@@ -1586,6 +1653,22 @@ cv.addEventListener('pointerdown', async e => {
       state.towns.push(nt);
       if (near) state.routes.push({ a:near.id, b:nt.id });
       state.sel = { type:'town', id:nt.id };
+      break;
+    }
+    case 'addlm': {
+      const here = occupiedIn(state.towns, c.x, c.y);
+      if (here){ state.sel = { type:'town', id:here.id }; break; }
+      if (!inner(c.x, c.y)){ setStatus('Places can\'t go on the edge squares of the map.'); break; }
+      const name = await askText('Name your new landmark:', 'New Landmark');
+      if (name === null) return;
+      pushUndo();
+      const ll = toLatLng(c.x, c.y);
+      const nl = { id:newId(), name:name.trim() || 'New Landmark', x:c.x, y:c.y, kind:'landmark', size:1, score:0, fixed:true, lat:ll.lat, lon:ll.lng };
+      // landmarks hang off the nearest town by a short route, like the generated ones
+      const near = state.towns.filter(o => o.kind !== 'landmark').sort((a, b) => dist(a, nl) - dist(b, nl))[0];
+      state.towns.push(nl);
+      if (near) state.routes.push({ a:near.id, b:nl.id });
+      state.sel = { type:'town', id:nl.id };
       break;
     }
     case 'delete':
@@ -1724,16 +1807,26 @@ async function forge(opts = {}){
       const stageLabel = () => `${Math.round(km.w)}×${Math.round(km.h)} km, ${tier.label} · ${(bytes/1048576).toFixed(1)} MB · ${Math.round((Date.now()-t0)/1000)} s`;
       setProgress(45, 'scout', stageLabel());
       ticker = setInterval(() => setProgress(45 + 47*Math.min(1, (Date.now()-t0)/(deadline-t0)), null, stageLabel()), 250);
-      const tasks = [timed('OSM towns', ob => fetchPlaces(b, osm.z, ob, deadline), onBytes),
-                     timed('OSM landmarks', ob => fetchLandmarks(b, ob, deadline), onBytes)];
-      if (!app) tasks.push(timed('OSM roads & rivers', ob => fetchWays(b, osm.z, true, ob), onBytes));
-      const [pR, lR, wR] = await Promise.allSettled(tasks);
+      // Settled results are recorded as they arrive, so the wait can end early without losing anything
+      const settle = p => { const o = { status:'pending' }; o.done = p.then(v => { o.status = 'fulfilled'; o.value = v; }, e => { o.status = 'rejected'; o.reason = e; }); return o; };
+      const wd = settle(timed('Wikidata', ob => fetchWikidata(b, ob, deadline), onBytes));
+      const osmTasks = [settle(timed('OSM towns', ob => fetchPlaces(b, osm.z, ob, deadline), onBytes)),
+                        settle(timed('OSM landmarks', ob => fetchLandmarks(b, ob, deadline), onBytes))];
+      if (!app) osmTasks.push(settle(timed('OSM roads & rivers', ob => fetchWays(b, osm.z, true, ob), onBytes)));
+      // Once Wikidata has answered, OpenStreetMap gets only a little longer: 2 s if Wikidata already found
+      // plenty of places, 4 s otherwise (a working Overpass answers a small area in a second or two)
+      const wdEnough = wd.done.then(() => wd.status !== 'fulfilled' || !app ? new Promise(() => {})
+        : sleep(places.length + wd.value.places.length >= count*2 ? 2000 : 4000));
+      await Promise.race([Promise.all([wd.done, ...osmTasks.map(o => o.done)]), wdEnough]);
       clearInterval(ticker); ticker = null;
+      const [pR, lR, wR] = osmTasks;
+      if (wd.status === 'fulfilled'){ places = places.concat(wd.value.places); landmarks = landmarks.concat(wd.value.landmarks); }
       if (pR.status === 'fulfilled') places = places.concat(pR.value);
       if (lR.status === 'fulfilled') landmarks = landmarks.concat(lR.value);
       if (wR && wR.status === 'fulfilled'){ ingestRoads(wR.value.roads); ingestRivers(wR.value.rivers); }
-      if (pR.status !== 'fulfilled' && lR.status !== 'fulfilled')
-        state.notes.push(app ? 'OpenStreetMap was busy — used bundled towns only.' : 'Town and road lookups failed.');
+      if (pR.status !== 'fulfilled' && lR.status !== 'fulfilled' && wd.status !== 'fulfilled')
+        state.notes.push(app ? 'OpenStreetMap and Wikidata were busy — used bundled towns only.' : 'Town and road lookups failed.');
+      const lmSeen = new Set(); landmarks = landmarks.filter(l => !lmSeen.has(l.name) && lmSeen.add(l.name));
     }
 
     setProgress(92, 'route', '');

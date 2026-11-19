@@ -27,9 +27,9 @@ def rep(old, new, count=1):
     s = s.replace(old, new)
 
 # ---------------- page shell ----------------
-rep('<title>Region Map Forge — Gen 4 Style, Emerald Grid</title>', '<title>Region Map Forge (Mobile Demo)</title>')
+rep('<title>Region Map Forge — Gen 3 Style, Emerald Grid</title>', '<title>Region Map Forge (Mobile Demo)</title>')
 rep('<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">\n', '')
-rep('<p>Frame a real place → forge a Gen 4-style Town Map on Emerald\'s 28×15 grid.</p>',
+rep('<p>Frame a real place → forge a Gen 3-style Town Map on Emerald\'s 28×15 grid.</p>',
     '<p>Mobile demo: fictional regions, generated in your browser. For real places, open the '
     '<a href="https://ajdur96.github.io/poke-region-map/" style="color:var(--accent)">full version</a>.</p>')
 rep('<div class="label pixel">1 · CHOOSE AN AREA</div>', '<div class="label pixel">1 · NEW REGION</div>')
@@ -85,6 +85,7 @@ rep("actionBtn('RENAME', () => { const v = prompt('Name this route:', r.name);",
     "actionBtn('RENAME', async () => { const v = await askText('Name this route:', r.name);")
 rep("cv.addEventListener('pointerdown', e => {", "cv.addEventListener('pointerdown', async e => {")
 rep("      const name = prompt('Name your new town:', 'New Town');", "      const name = await askText('Name your new town:', 'New Town');")
+rep("      const name = prompt('Name your new landmark:', 'New Landmark');", "      const name = await askText('Name your new landmark:', 'New Landmark');")
 rep("$('titleBar').onclick = () => {", "$('titleBar').onclick = async () => {")
 rep("  const v = prompt('Name this region (leave empty for an automatic name):', state.regionName);",
     "  const v = await askText('Name this region (leave empty for an automatic name):', state.regionName);")
