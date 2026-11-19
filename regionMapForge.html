@@ -230,7 +230,7 @@ const TOOL_HINTS = {
   land:'Drag to paint land.', sea:'Drag to paint water.', mountain:'Drag to raise mountains.'
 };
 
-const state = { terrain:null, cover:null, climate:null, elev:null, lake:null, sq:null, sqElev:null,
+const state = { terrain:null, cover:null, climate:null, coast:null, elev:null, lake:null, sq:null, sqElev:null,
   roadSq:new Float32Array(MW*MH), roadEdges:new Set(), river:null, riverNames:new Map(), gen:null, towns:[], routes:[],
   startId:null, sel:null, cursor:{x:0, y:0}, tool:'inspect', linkFrom:null, nextId:1, seed:0, ver:0, notes:[] };
 
@@ -615,6 +615,25 @@ function sampleSub(m, sx, sy, fn){
     const k = (y*m.pw + x)*4; sum += fn(m.data[k], m.data[k+1], m.data[k+2], m.data[k+3]); n++;
   }
   return n ? sum/n : 0;
+}
+
+// The real shoreline at 1-pixel detail (224×120), read straight from the OSM tiles: 0 land, 1 water,
+// 2 unknown (hand-painted since). Only the smooth styles draw from it; routing still uses the sub-cells.
+function buildCoast(osm){
+  if (!osm.data){ state.coast = null; return; }
+  const g = state.gen, f = 2 ** (osm.z - g.z), W = SW*SP, H = SH*SP, c = new Uint8Array(W*H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    let wet = 0, n = 0;
+    for (const [ox, oy] of [[.25,.25],[.75,.25],[.25,.75],[.75,.75]]){
+      const p = gridToPx(g, (x + ox)/TILE, (y + oy)/TILE);
+      const X = Math.floor(p.x*f - osm.p1.x), Y = Math.floor(p.y*f - osm.p1.y);
+      if (X < 0 || Y < 0 || X >= osm.pw || Y >= osm.ph) continue;
+      const k = (Y*osm.pw + X)*4, r = osm.data[k], gg = osm.data[k+1], b = osm.data[k+2], a = osm.data[k+3];
+      n++; if (a > 0 && b - r > 25 && b >= gg - 10 && r < 200) wet++;
+    }
+    c[y*W + x] = n ? (wet*2 > n ? 1 : 0) : 2;
+  }
+  state.coast = c;
 }
 
 function buildTerrain(osm, dem, lakes = []){
@@ -1632,6 +1651,15 @@ function paintSmoothLand(style){
   // fields per sub-cell: land 0/1; relief 1–4 (sea counts as lowland so coasts don't grow fake bands), lightly blurred
   const land = new Float32Array(SW*SH), rel0 = new Float32Array(SW*SH), rel = new Float32Array(SW*SH);
   for (let i = 0; i < SW*SH; i++){ land[i] = t[i] === T.SEA ? 0 : 1; rel0[i] = Math.max(1, t[i]); }
+  // fallback coast (no shoreline data, or hand-painted spots): a softened land mask gives rounder curves
+  const landSoft = new Float32Array(SW*SH), mixed = new Uint8Array(SW*SH);
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
+    let s2 = 0, n2 = 0, lo = 1, hi = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (inSub(x+dx, y+dy)){
+      const v = land[(y+dy)*SW + x+dx], w = dx || dy ? (dx && dy ? .5 : 1) : 3; s2 += v*w; n2 += w; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    landSoft[y*SW + x] = s2/n2; mixed[y*SW + x] = lo !== hi;
+  }
+  const coast = state.coast && state.coast.length === SW*SP*SH*SP ? state.coast : null;
   for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
     let s = 0, n = 0;
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (inSub(x+dx, y+dy)){ const w = dx || dy ? 1 : 2; s += rel0[(y+dy)*SW + x+dx]*w; n += w; }
@@ -1651,7 +1679,10 @@ function paintSmoothLand(style){
   const put = (i, c) => { d[i*4] = c[0]; d[i*4+1] = c[1]; d[i*4+2] = c[2]; d[i*4+3] = 255; };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
     const i = y*W + x, sub = ((y/SP) | 0)*SW + ((x/SP) | 0);
-    if (bil(land, x, y) < .5){                       // water: smooth depth bands (lakes are shallower)
+    // land or water? Away from the coast the sub-cells decide; along it, the real shoreline (or the softened mask)
+    const cw = coast ? coast[i] : 2;
+    const wet = !mixed[sub] ? t[sub] === T.SEA : cw < 2 ? cw === 1 : bil(landSoft, x, y) < .5;
+    if (wet){                                        // water: smooth depth bands (lakes are shallower)
       const dp = bil(depth, x, y) + .5;
       put(i, bil(lake, x, y) >= .5 ? (dp < 2 ? W_SH : W_MID) : dp < 2 ? W_SH : dp < 4 ? W_MID : W_DEEP);
       continue;
@@ -1845,7 +1876,7 @@ function bracket(b){
 
 function render(){
   if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
-  const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.cover), idOf(state.river), idOf(state.roadEdges),
+  const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.cover), idOf(state.coast), idOf(state.river), idOf(state.roadEdges),
               $('showGrid').checked, $('showRivers').checked, mapStyle()].join('|');
   if (sk !== staticKey){ buildStatic(); buildWeatherAnim(); staticKey = sk; }
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
@@ -1995,7 +2026,10 @@ function routeAt(c){
 function paint(c){
   const v = state.tool === 'land' ? T.LAND : state.tool === 'sea' ? T.SEA : T.MTN;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
-    if (inSub(c.sx+dx, c.sy+dy)){ state.terrain[(c.sy+dy)*SW + c.sx+dx] = v; if (state.cover) state.cover[(c.sy+dy)*SW + c.sx+dx] = 0; }
+    if (inSub(c.sx+dx, c.sy+dy)){
+      state.terrain[(c.sy+dy)*SW + c.sx+dx] = v; if (state.cover) state.cover[(c.sy+dy)*SW + c.sx+dx] = 0;
+      if (state.coast) for (let py = 0; py < SP; py++) for (let qx = 0; qx < SP; qx++) state.coast[((c.sy+dy)*SP + py)*SW*SP + (c.sx+dx)*SP + qx] = 2;
+    }
   derive(); render();
 }
 
@@ -2129,7 +2163,7 @@ function endProgress(){ $('progress').style.display = 'none'; $('progressFill').
 
 // Wipe the previous region so old towns never mix with the new one
 function clearRegion(){
-  Object.assign(state, { terrain:null, cover:null, climate:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
+  Object.assign(state, { terrain:null, cover:null, climate:null, coast:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
     roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{}, source:null, variant:0,
     regionName:'', regionNameCustom:false });
@@ -2161,6 +2195,7 @@ async function forge(opts = {}){
     const app = stat ? staticToApp(stat, b) : null;
     if (!osm.data) state.notes.push(app ? 'Map tiles unreadable — lakes from bundled data.' : 'Couldn\'t read water from map tiles.');
     buildTerrain(osm, dem, app ? app.lakes : []);
+    buildCoast(osm);
     await buildClimate(b);
     const lcSource = await buildCover(lc, b);
     if (lcSource === 'bundle') state.notes.push(lc.tooBig ? 'Large frame — land cover from the offline bundle.' : 'Live land cover unavailable — used the offline bundle.');
@@ -2579,7 +2614,7 @@ const UNDO_LIMIT = 50, SAVE_KEY = 'regionMapForge.region.v1';
 let undoStack = [], redoStack = [];
 function takeSnap(over = {}){
   return {
-    terrain:state.terrain.slice(), cover:state.cover ? state.cover.slice() : null, climate:state.climate, towns:structuredClone(state.towns), routes:structuredClone(state.routes),
+    terrain:state.terrain.slice(), cover:state.cover ? state.cover.slice() : null, climate:state.climate, coast:state.coast ? state.coast.slice() : null, towns:structuredClone(state.towns), routes:structuredClone(state.routes),
     startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant,
     regionName:state.regionName, regionNameCustom:state.regionNameCustom,
     flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
@@ -2589,7 +2624,7 @@ function takeSnap(over = {}){
 }
 function applySnap(sn){
   Object.assign(state, sn.shared);
-  Object.assign(state, { terrain:sn.terrain.slice(), cover:sn.cover ? sn.cover.slice() : null, climate:sn.climate || null, towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
+  Object.assign(state, { terrain:sn.terrain.slice(), cover:sn.cover ? sn.cover.slice() : null, climate:sn.climate || null, coast:sn.coast ? sn.coast.slice() : null, towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
     startId:sn.startId, nextId:sn.nextId, seed:sn.seed, variant:sn.variant || 0, sel:null, linkFrom:null,
     regionName:sn.regionName || '', regionNameCustom:!!sn.regionNameCustom });
   if (!state.regionName) suggestRegionName();
@@ -2624,13 +2659,16 @@ function setBendyLabel(){
 // --- Full region ⇄ plain JSON (typed arrays as base64, Maps/Sets as arrays) ---
 const toB64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 const fromB64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+// coastline values 0–2 packed four to a byte (6.7 KB instead of 27 KB)
+const packCoast = c => { const u = new Uint8Array(Math.ceil(c.length/4)); for (let i = 0; i < c.length; i++) u[i >> 2] |= c[i] << ((i & 3)*2); return toB64(u); };
+const unpackCoast = str => { const u = fromB64(str), c = new Uint8Array(SW*SP*SH*SP); for (let i = 0; i < c.length; i++) c[i] = (u[i >> 2] >> ((i & 3)*2)) & 3; return c; };
 const f32ToB64 = f => toB64(new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
 const b64ToF32 = str => new Float32Array(fromB64(str).buffer);
 function serialize(){
   const g = state.gen, c = g.b.corners, ll = p => ({ lat:p.lat, lng:p.lng }), n = state.names;
   return {
     format:'regionMapForge-editor/1', savedAt:new Date().toISOString(),
-    terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, climate:state.climate ? toB64(state.climate) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
+    terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, climate:state.climate ? toB64(state.climate) : null, coast:state.coast ? packCoast(state.coast) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
     riverNames:[...state.riverNames], roadSq:f32ToB64(state.roadSq), roadEdges:[...state.roadEdges], roadEdgeName:[...(state.roadEdgeName || [])],
     names:n ? { lake:[...n.lake], sea:[...n.sea], range:[...n.range], land:[...n.land].map(([k, v]) => [k, { name:v.name, kind:v.kind }]), peaks:n.peaks } : null,
     gen:{ z:g.z, o:g.o, ex:g.ex, ey:g.ey, det:g.det, b:{ ...g.b, corners:{ tl:ll(c.tl), tr:ll(c.tr), bl:ll(c.bl), br:ll(c.br) } } },
@@ -2646,7 +2684,7 @@ function serialize(){
 function deserialize(o){
   const n = o.names;
   return {
-    terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, climate:o.climate ? fromB64(o.climate) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
+    terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, climate:o.climate ? fromB64(o.climate) : null, coast:o.coast ? unpackCoast(o.coast) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
     regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
     flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
     shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
