@@ -1,0 +1,31 @@
+<!DOCTYPE html><html><body><pre id="o">testing…</pre><script>
+const T = {
+ terrascopeWMS: 'https://services.terrascope.be/wms/v2?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=WORLDCOVER_2021_MAP&STYLES=&CRS=EPSG:3857&BBOX=-12467000,4890000,-12357000,4950000&WIDTH=256&HEIGHT=140&FORMAT=image/png',
+ terrascopeWMTS: 'https://services.terrascope.be/wmts/v2?layer=WORLDCOVER_2021_MAP&style=&tilematrixset=EPSG:3857&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image/png&TileMatrix=EPSG:3857:8&TileCol=48&TileRow=97',
+ pcItemBbox: 'https://planetarycomputer.microsoft.com/api/data/v1/item/bbox/-112,40.5,-111.5,40.9/256x200.png?collection=esa-worldcover&item=ESA_WorldCover_10m_2021_v200_N39W112&assets=map&colormap_name=esa-worldcover',
+ awsCOGrange: 'https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N39W112_Map.tif',
+ esriIO: 'https://ic.imagery1.arcgis.com/arcgis/rest/services/Sentinel2_10m_LandCover/ImageServer/exportImage?bbox=-12467000,4890000,-12357000,4950000&bboxSR=3857&imageSR=3857&size=256,140&format=png&f=image'
+};
+const out = []; const o = document.getElementById('o');
+(async () => {
+ for (const [k, u] of Object.entries(T)){
+   const t0 = performance.now();
+   try {
+     const r = await fetch(u, k === 'awsCOGrange' ? { headers:{ Range:'bytes=0-1023' } } : {});
+     const b = await r.arrayBuffer();
+     let px = '';
+     if (k !== 'awsCOGrange'){
+       const img = await createImageBitmap(new Blob([b]));
+       const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+       const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+       const d = x.getImageData(0, 0, img.width, img.height).data; const set = new Set();
+       for (let i = 0; i < d.length; i += 4*97) set.add(d[i]+','+d[i+1]+','+d[i+2]+','+d[i+3]);
+       px = ` ${img.width}x${img.height} colors:${[...set].slice(0,12).join(' | ')}`;
+     }
+     out.push(`${k}: OK ${r.status} ${b.byteLength}B ${(performance.now()-t0|0)}ms${px}`);
+   } catch (e){ out.push(`${k}: FAIL ${e} ${(performance.now()-t0|0)}ms`); }
+   o.textContent = out.join('\n');
+ }
+ out.push('DONE'); o.textContent = out.join('\n');
+})();
+</script></body></html>
