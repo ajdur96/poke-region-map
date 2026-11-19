@@ -133,6 +133,9 @@
       <label><input type="checkbox" id="showRivers" checked> Rivers</label>
       <label><input type="checkbox" id="showClouds" checked> Clouds</label>
       <label><input type="checkbox" id="showWeather"> Weather</label>
+      <label>Style <select id="mapStyle" style="font-size:13px;padding:3px;border-radius:5px">
+        <option value="pixel">Pixelated</option><option value="sinnoh">Sinnoh (smooth)</option></select></label>
+      <label>Routes see-through <input type="range" id="routeOpacity" min="20" max="100" value="75" style="width:90px;vertical-align:middle"> <span id="routeOpacityOut">75%</span> solid</label>
       <label>Theme <select id="theme" style="font-size:13px;padding:3px;border-radius:5px">
         <option value="day">Day</option><option value="night">Night</option><option value="live">Live (real sunlight)</option>
         <option value="poketch">Pokétch</option><option value="sepia">Sepia</option></select></label>
@@ -1509,7 +1512,9 @@ function snapLandmarks(){
 // ===== Rendering =====
 const cv = $('region'), ctx = cv.getContext('2d', { willReadFrequently:true });   // themes read each frame back
 const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
-const ROUTE_ALPHA = 0.75;                                  // 1 = solid, lower = more terrain shows through
+// Route opacity comes from the slider (1 = solid, lower = more terrain shows through); the export bakes in the same look
+const routeAlpha = () => (+$('routeOpacity').value || 75)/100;
+const mapStyle = () => STYLE_PAL[$('mapStyle').value] ? $('mapStyle').value : 'pixel';
 const routeLayer = document.createElement('canvas'); routeLayer.width = cv.width; routeLayer.height = cv.height;
 const rctx = routeLayer.getContext('2d');
 
@@ -1552,7 +1557,7 @@ const anim = { dashes:[], foam:[], glints:[], clouds:[], weather:[] };
 let exportMode = false;                               // pokeemerald export: opaque routes, day colours, no clouds/overlays
 
 function buildStatic(){
-  const t = state.terrain;
+  const t = state.terrain, smooth = mapStyle() !== 'pixel', cover = smooth ? null : state.cover;
   const toLand = bfsSub(i => t[i] !== T.SEA), toWater = bfsSub(i => t[i] === T.SEA);
   const at = (x, y) => inSub(x, y) ? t[y*SW+x] : -1;
   anim.dashes = []; anim.foam = []; anim.glints = [];
@@ -1568,9 +1573,9 @@ function buildStatic(){
         if (d >= 4 && h > 0.9) anim.dashes.push([X, Y+1, phase]);             // open-sea swell dashes
         if (d === 1) anim.foam.push([X + (h > .5 ? 1 : 0), Y, phase]);         // shoreline sparkle spots
       }
-    } else if (state.cover && state.cover[i] && v !== T.PEAK && !(v === T.MTN && state.cover[i] !== C.SNOW)){
+    } else if (cover && cover[i] && v !== T.PEAK && !(v === T.MTN && cover[i] !== C.SNOW)){
       // land cover over flat land and hills; on mountains only snow shows
-      const c = state.cover[i], h = hash(sx, sy), cv2 = (dx, dy) => inSub(sx+dx, sy+dy) ? state.cover[(sy+dy)*SW + sx+dx] : c;
+      const c = cover[i], h = hash(sx, sy), cv2 = (dx, dy) => inSub(sx+dx, sy+dy) ? cover[(sy+dy)*SW + sx+dx] : c;
       if (c === C.FOREST){
         spx(X, Y, SP, SP, PAL.forest);
         if ((sx + 2*sy) % 4 === 0) spx(X, Y, 1, 1, PAL.forestHi);                  // tree-top dots
@@ -1613,8 +1618,9 @@ function buildStatic(){
       if (at(sx, sy+1) !== T.PEAK) spx(X, Y+SP-1, SP, 1, PAL.peakLo);
     }
   }
+  if (smooth) paintSmoothLand(mapStyle());
   // coastline: dark green on land, white foam on water
-  for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
+  if (!smooth) for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
     if (t[sy*SW+sx] === T.SEA) continue;
     const X = sx*SP, Y = sy*SP;
     if (at(sx, sy-1) === T.SEA){ spx(X, Y, SP, 1, PAL.landEdge); spx(X, Y-1, SP, 1, PAL.foam); }
@@ -1623,7 +1629,7 @@ function buildStatic(){
     if (at(sx+1, sy) === T.SEA){ spx(X+SP-1, Y, 1, SP, PAL.landEdge); spx(X+SP, Y, 1, SP, PAL.foam); }
   }
   const showRivers = state.river && $('showRivers').checked;
-  if (showRivers)
+  if (showRivers && !smooth)
     for (let i = 0; i < SW*SH; i++)
       if (state.river[i] && t[i] !== T.SEA) spx((i % SW)*SP, ((i/SW) | 0)*SP, SP, SP, PAL.river);
   if ($('showGrid').checked){
@@ -1632,6 +1638,83 @@ function buildStatic(){
     for (let y = 1; y < MH; y++) sctx.fillRect(0, y*TILE, cv.width, 1);
   }
   anim.clouds = makeClouds();
+}
+
+// ===== Smooth styles =====
+// The land is repainted one pixel at a time from smoothly interpolated fields (land/sea, relief class, elevation),
+// so coasts and contour bands curve instead of stepping in 2-pixel blocks. Same data, same 224×120 detail.
+const STYLE_PAL = {
+  sinnoh:{ land:'#80c868', land2:'#70b858', landHi:'#98d878', hill:'#a8d070', hillLo:'#88b858',
+           mtn:'#c09860', mtnHi:'#dcb880', mtnLo:'#987040', snow:'#f4f8fc', snowLo:'#c4d0e0',
+           coast:'#3c8840', foam:'#e8f8ff', shallow:'#68c8f0', river:'#58b0e8' }
+};
+const hexRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+function paintSmoothLand(style){
+  const P = Object.fromEntries(Object.entries(STYLE_PAL[style]).map(([k, v]) => [k, hexRgb(v)]));
+  const t = state.terrain, W = SW*SP, H = SH*SP;
+  // fields per sub-cell: land 0/1; relief 1–4 (sea counts as lowland so coasts don't grow fake bands), lightly blurred
+  const land = new Float32Array(SW*SH), rel0 = new Float32Array(SW*SH), rel = new Float32Array(SW*SH);
+  for (let i = 0; i < SW*SH; i++){ land[i] = t[i] === T.SEA ? 0 : 1; rel0[i] = Math.max(1, t[i]); }
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
+    let s = 0, n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (inSub(x+dx, y+dy)){ const w = dx || dy ? 1 : 2; s += rel0[(y+dy)*SW + x+dx]*w; n += w; }
+    rel[y*SW + x] = s/n;
+  }
+  const bil = (f, px0, py0) => {                       // bilinear sample at a pixel centre
+    const u = Math.min(SW - 1.001, Math.max(0, (px0 + .5)/SP - .5)), v = Math.min(SH - 1.001, Math.max(0, (py0 + .5)/SP - .5));
+    const x0 = u | 0, y0 = v | 0, fx = u - x0, fy = v - y0, i = y0*SW + x0;
+    return f[i]*(1-fx)*(1-fy) + f[i+1]*fx*(1-fy) + f[i+SW]*(1-fx)*fy + f[i+SW+1]*fx*fy;
+  };
+  const polar = state.climate ? (() => { let p = 0, n = 0; for (const v of state.climate) if (v){ n++; if (v >= 30) p++; } return n && p/n > .3; })() : false;
+  const img = sctx.getImageData(0, 0, W, H), d = img.data, isLand = new Uint8Array(W*H), blobs = makeBlobField();
+  const put = (i, c) => { d[i*4] = c[0]; d[i*4+1] = c[1]; d[i*4+2] = c[2]; d[i*4+3] = 255; };
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    const i = y*W + x, sub = ((y/SP) | 0)*SW + ((x/SP) | 0);
+    if (bil(land, x, y) < .5){ if (t[sub] !== T.SEA) put(i, P.shallow); continue; }   // smoothed coast: water here
+    isLand[i] = 1;
+    const r = bil(rel, x, y), lit = (bil(rel, x+1, y+1) - bil(rel, x-1, y-1));     // >0: slope facing the north-west light
+    let c;
+    if (r >= 3.45 || (polar && r >= 2.6)) c = lit < -.12 ? P.snowLo : P.snow;
+    else if (r >= 2.5) c = lit > .1 ? P.mtnHi : lit < -.1 ? P.mtnLo : P.mtn;
+    else if (r >= 1.6) c = lit < -.08 ? P.hillLo : P.hill;
+    else {                                             // lowland: soft lighter and darker patches
+      const blob = bil(blobs, x, y);
+      c = blob > .62 ? P.landHi : blob < .3 ? P.land2 : P.land;
+    }
+    put(i, c);
+  }
+  // rivers: 1-pixel lines joining neighbouring river sub-cells
+  if (state.river && $('showRivers').checked){
+    const line = (x0, y0, x1, y1) => { const n = Math.max(Math.abs(x1-x0), Math.abs(y1-y0)) || 1;
+      for (let k = 0; k <= n; k++){ const x = Math.round(x0 + (x1-x0)*k/n), y = Math.round(y0 + (y1-y0)*k/n); if (x >= 0 && y >= 0 && x < W && y < H && isLand[y*W+x]) put(y*W+x, P.river); } };
+    for (let i = 0; i < SW*SH; i++){
+      if (!state.river[i] || t[i] === T.SEA) continue;
+      const sx = i % SW, sy = (i/SW) | 0, cx = sx*SP + 1, cy = sy*SP + 1;
+      for (const [dx, dy] of [[1,0],[0,1],[1,1],[-1,1]]){
+        const nx = sx+dx, ny = sy+dy; if (!inSub(nx, ny)) continue;
+        const j = ny*SW + nx; if (state.river[j] || t[j] === T.SEA) line(cx, cy, nx*SP + 1, ny*SP + 1);
+      }
+    }
+  }
+  // coastline: a 1-pixel dark edge on the land, a light rim on the water
+  const edge = new Uint8Array(W*H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    const i = y*W + x, nb = [[1,0],[-1,0],[0,1],[0,-1]].map(([dx, dy]) => { const X = x+dx, Y = y+dy; return X < 0 || Y < 0 || X >= W || Y >= H ? -1 : isLand[Y*W+X]; });
+    if (isLand[i] && nb.includes(0)) edge[i] = 1; else if (!isLand[i] && nb.includes(1)) edge[i] = 2;
+  }
+  for (let i = 0; i < W*H; i++) if (edge[i]) put(i, edge[i] === 1 ? P.coast : P.foam);
+  sctx.putImageData(img, 0, 0);
+}
+// Large soft patches for lowland colour variety (fixed per region, so it doesn't shimmer between redraws)
+function makeBlobField(){
+  const f = new Float32Array(SW*SH), seed = state.seed || 1;
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
+    const v = (gx, gy, s) => { const x0 = Math.floor(gx/s), y0 = Math.floor(gy/s), fx = gx/s - x0, fy = gy/s - y0;
+      const h = (a, b) => hash(a*7 + seed, b*13 + seed*3), sm = q => q*q*(3 - 2*q);
+      return (h(x0, y0)*(1-sm(fx)) + h(x0+1, y0)*sm(fx))*(1-sm(fy)) + (h(x0, y0+1)*(1-sm(fx)) + h(x0+1, y0+1)*sm(fx))*sm(fy); };
+    f[y*SW + x] = v(x, y, 9)*.7 + v(x, y, 4)*.3;
+  }
+  return f;
 }
 
 // A few soft, blocky cloud shadows (built from overlapping rectangles, filled as one shape)
@@ -1759,7 +1842,7 @@ function bracket(b){
 function render(){
   if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
   const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.cover), idOf(state.river), idOf(state.roadEdges),
-              $('showGrid').checked, $('showRivers').checked].join('|');
+              $('showGrid').checked, $('showRivers').checked, mapStyle()].join('|');
   if (sk !== staticKey){ buildStatic(); buildWeatherAnim(); staticKey = sk; }
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
   const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
@@ -1771,7 +1854,7 @@ function render(){
     if (rv.terrainX > 0) ctx.drawImage(staticLayer, 0, 0, rv.terrainX, cv.height, 0, 0, rv.terrainX, cv.height);
     px(rv.terrainX, 0, 2, cv.height, 'rgba(255,255,255,.7)');
   } else { ctx.drawImage(staticLayer, 0, 0); drawWater(); }
-  ctx.globalAlpha = exportMode ? 1 : ROUTE_ALPHA;
+  ctx.globalAlpha = routeAlpha();
   if (rv && rv.routeD != null){                       // routes growing outward from the starting town
     ctx.save(); ctx.beginPath();
     for (const [k, d] of rv.dist) if (d <= rv.routeD) ctx.rect((k % MW)*TILE, ((k/MW) | 0)*TILE, TILE, TILE);
@@ -1997,6 +2080,8 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
   state.tool = b.dataset.tool; state.linkFrom = null; render(); showInfo();
 });
 $('showGrid').onchange = render;
+$('mapStyle').onchange = () => { render(); scheduleSave(); };
+$('routeOpacity').oninput = () => { $('routeOpacityOut').textContent = $('routeOpacity').value + '%'; render(); scheduleSave(); };
 $('showRivers').onchange = render;
 $('flavorNames').onchange = () => {
   if (!state.terrain) return;
@@ -2551,7 +2636,7 @@ function serialize(){
     source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '', p.local || '', p.romanized ? 1 : 0]),
                             landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '', l.local || '', l.romanized ? 1 : 0]) } : null,
     ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value, theme:$('theme').value,
-         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked }
+         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked, style:mapStyle(), routeOpacity:+$('routeOpacity').value }
   };
 }
 function deserialize(o){
@@ -2609,6 +2694,8 @@ function loadRegion(o, howLabel){
   applySnap(sn);
   const ui = (o.editorState || o).ui;
   if (ui?.theme){ $('theme').value = ui.theme; refreshTheme(); }
+  if (ui?.style && [...$('mapStyle').options].some(o => o.value === ui.style)) $('mapStyle').value = ui.style;
+  if (ui?.routeOpacity){ $('routeOpacity').value = ui.routeOpacity; $('routeOpacityOut').textContent = ui.routeOpacity + '%'; }
   if (ui){ $('townCount').value = ui.townCount; $('townOut').textContent = ui.townCount;
            $('extraCount').value = ui.extraCount; $('extraOut').textContent = ui.extraCount; $('landmarks').checked = ui.landmarks; }
   viewRegion(state.gen);
