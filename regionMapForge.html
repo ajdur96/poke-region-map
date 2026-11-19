@@ -1643,8 +1643,8 @@ const STYLE_PAL = {
   sinnoh:{ land:'#80c868', land2:'#70b858', landHi:'#98d878', hill:'#a8d070', hillLo:'#88b858',
            mtn:'#c09860', mtnHi:'#dcb880', mtnLo:'#987040', snow:'#f4f8fc', snowLo:'#c4d0e0',
            coast:'#3c8840', foam:'#e8f8ff', shallow:'#68c8f0', river:'#58b0e8' },
-  hgss:{ rings:['#d0ec90', '#a8d870', '#80c458'], heights:['#5ca848', '#408838', '#2e6a30'], coast:'#f8f8e8', river:'#40a0e0',
-         seaRings:['#c8e8ff', '#98d0f8', '#68b0f0', '#3c88e0', '#2868c8'], dash:'#5898e8' },
+  hgss:{ green:'#63c694', rim:'#52b584', tans:['#daa271', '#e8ab79', '#f7b584'], contour:'#c6946b', coast:'#52b584', river:'#51bada',
+         seaRings:['#6fcde8', '#51bada', '#42b5ce', '#39a5bd'], dash:'#6fcde8' },
   gen3:{ bands:['#007300', '#39ac08', '#62d500', '#acee31', '#eee673'], peak:'#eee6ac', peakLo:'#cdcd94',
          coast:'#006200', foam:'#ffffff', river:'#4a9ce6',
          water:['#9cd5ff', '#94cdf8', '#8cc4f0'], stripes:['#9cd5ff', '#a4b4ff'], dash:'#b4e2ff' }
@@ -1652,7 +1652,7 @@ const STYLE_PAL = {
 // Per-style route and marker drawing (Pixelated and Sinnoh share the original look)
 const ROUTE_LOOK = {
   default:{ out:3, fill:2, center:0 },
-  hgss:{ out:3, fill:2, center:0, round:true, rOut:'#f8f8f0', rFill:'#48b8a0', sOut:'#f8f8f0', sFill:'#58a8e8' },
+  hgss:{ out:3, fill:2, center:0, round:true, rOut:'#525252', rFill:'#ffffff', sOut:'#525252', sFill:'#63b5ff' },
   gen3:{ out:4, fill:4, center:0, rOut:'#e6a400', rFill:'#e6a400', sOut:'#5294d5', sFill:'#5294d5', landmark:'gen3' }
 };
 const routeLook = () => ROUTE_LOOK[mapStyle()] || ROUTE_LOOK.default;
@@ -1736,6 +1736,7 @@ function paintSmoothLand(style){
       put(i, band >= 5 ? (bil(rel, (i % W) + 1, ((i/W) | 0) + 1) < r - .05 ? P.peakLo : P.peak) : P.bands[Math.min(band, 4)]);
     }
   }
+  const bandOf = r => r >= 3.45 ? 3 : r >= 2.5 ? 2 : r >= 1.7 ? 1 : 0;
   if (hgss){
     // two distance fields on the 1-pixel grid: land pixels to the nearest water, water pixels to the nearest land
     const bfs = src => { const dd = new Uint8Array(W*H).fill(255), qq = [];
@@ -1747,14 +1748,19 @@ function paintSmoothLand(style){
     const toWet = bfs(i => !isLand[i]), toDry = bfs(i => isLand[i]);
     for (let i = 0; i < W*H; i++){
       if (isLand[i]){
-        // light rings along the shore fading to the lowland green; high ground stacks darker contour rings
-        const dc = toWet[i], r = landPx[i];
-        const h = r >= 3.45 ? 2 : r >= 2.5 ? 1 : r >= 1.7 ? 0 : -1;
-        put(i, h >= 0 ? P.heights[h] : P.rings[dc <= 2 ? 0 : dc <= 5 ? 1 : 2]);
+        const h = bandOf(landPx[i]);
+        put(i, h ? P.tans[h - 1] : toWet[i] <= 2 ? P.rim : P.green);
       } else if (seaPx[i]){
-        const dl = toDry[i], ring = dl <= 1 ? 0 : dl <= 4 ? 1 : dl <= 8 ? 2 : dl <= 14 ? 3 : 4;
+        const dl = toDry[i], ring = dl <= 2 ? 0 : dl <= 8 ? 1 : dl <= 16 ? 2 : 3;
         put(i, P.seaRings[ring]);
       }
+    }
+    // brown contour line wherever the ground steps up a band
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+      const i = y*W + x; if (!isLand[i]) continue;
+      const h = bandOf(landPx[i]); if (!h) continue;
+      if ([[1,0],[-1,0],[0,1],[0,-1]].some(([dx, dy]) => { const X = x+dx, Y = y+dy;
+        return X >= 0 && Y >= 0 && X < W && Y < H && isLand[Y*W+X] && bandOf(landPx[Y*W+X]) < h; })) put(i, P.contour);
     }
   }
   // rivers: 1-pixel lines joining neighbouring river sub-cells
@@ -1930,12 +1936,14 @@ function drawMarker(t){
   else if (t.kind === 'town'){ b = { x0:X, y0:Y, w:8, h:8 }; c = [PAL.tOut, PAL.tFill, PAL.tHi]; }
   else { b = { x0:X, y0:Y+2, w:8, h:5 }; c = [PAL.lOut, PAL.lFill, PAL.lHi]; }
   if (mapStyle() === 'hgss'){
-    if (t.kind === 'landmark'){ b = { x0:X, y0:Y, w:8, h:8 }; drawLandmarkIcon(t, X, Y); }
-    else {
-      const [roof, band, wall] = t.kind === 'city' ? ['#f06070', '#c02838', '#f8d0b0'] : ['#f88898', '#d04050', '#f8e0c8'];
-      px(b.x0+1, b.y0, b.w-2, b.h, '#f8f8f0'); px(b.x0, b.y0+1, b.w, b.h-2, '#f8f8f0');            // light rim
-      const ix = b.x0+1, iy = b.y0+1, iw = b.w-2, ih = b.h-2, top = Math.max(1, Math.floor(ih/2) - 1);
-      px(ix, iy, iw, top, roof); px(ix, iy+top, iw, 1, band); px(ix, iy+top+1, iw, ih-top-1, wall);
+    if (t.kind === 'landmark'){                        // small green dot on the route
+      b = { x0:X+1, y0:Y+1, w:6, h:6 };
+      px(X+2, Y+1, 4, 6, '#525252'); px(X+1, Y+2, 6, 4, '#525252');
+      px(X+3, Y+2, 2, 4, '#73ce94'); px(X+2, Y+3, 4, 2, '#73ce94');
+    } else {                                           // red block, light on top and darker at the bottom
+      px(b.x0+1, b.y0, b.w-2, b.h, '#525252'); px(b.x0, b.y0+1, b.w, b.h-2, '#525252');
+      const ix = b.x0+1, iy = b.y0+1, iw = b.w-2, ih = b.h-2, top = Math.ceil(ih*.55);
+      px(ix, iy, iw, top, '#fa5263'); px(ix, iy+top, iw, 1, '#cc3949'); px(ix, iy+top+1, iw, ih-top-1, '#a23047');
     }
   } else if (mapStyle() === 'gen3' && t.kind === 'landmark'){  // FireRed-style landmark: a small pale-blue square, white border
     b = { x0:X+1, y0:Y+1, w:6, h:6 };
@@ -1958,33 +1966,54 @@ function drawMarker(t){
   return b;
 }
 
-// HGSS-style picture icons for landmarks (original 8×8 pixel art), chosen from the landmark's kind or name
+// HGSS-style picture icons (original 8×8 pixel art), set on empty squares beside landmarks, towns and routes
 const ICONS = {
-  mountain:['...X....','..XWX...','..XWWX..','.XXXWX..','.XXXXXX.','XXXXXXXX','XXXXXXXX','........'],
-  water:   ['........','..XXXX..','.XWWWWX.','XWWXWWWX','XWWWWXWX','.XWWWWX.','..XXXX..','........'],
-  tree:    ['...XX...','..XXXX..','.XXWXXX.','.XXXXWX.','..XXXX..','...TT...','...TT...','..TTTT..'],
-  tower:   ['...XX...','..XWWX..','..XXXX..','..XWWX..','..XXXX..','.XWWWWX.','.XXXXXX.','XXXXXXXX']
+  mountain:['...D....','..DLD...','..DLGD.D','.DLGGDDL','.DGGGGDG','DGGGGGGD','DDDDDDDD','........'],
+  water:   ['........','..DDDD..','.DWWWWD.','DWWLWWWD','DWWWWLWD','.DWWWWD.','..DDDD..','........'],
+  tree:    ['..DDD...','.DGGGD..','DGLGGGD.','DGGGGGD.','.DGGGD..','..DTD...','..DTD...','........'],
+  tower:   ['..DDDD..','.DBBBBD.','DBBBBBBD','DBBDDBBD','DBD..DBD','DD....DD','........','........']
 };
-const ICON_COL = { mountain:{ X:'#c04848', W:'#f8f8f8' }, water:{ X:'#2878d0', W:'#a8e0ff' },
-                   tree:{ X:'#2c8a3c', W:'#78d070', T:'#8a5a30' }, tower:{ X:'#7058a8', W:'#e8e0ff' } };
+const ICON_COL = { mountain:{ D:'#6b6b6b', L:'#e0e0e0', G:'#a8a8a8' }, water:{ D:'#2c7ca8', W:'#51bada', L:'#c8f0ff' },
+                   tree:{ D:'#2e7a4e', G:'#4aa56b', L:'#7cd09a', T:'#8a5a30' }, tower:{ D:'#7a5434', B:'#c39269' } };
+function drawDecor(){
+  if (mapStyle() !== 'hgss') return;
+  const used = new Set(), key = (x, y) => y*MW + x;
+  for (const p of routePaths()) for (const q of p.squares) used.add(key(q.x, q.y));
+  for (const t of state.towns) for (const f of footprint(t)) used.add(key(f.x, f.y));
+  const free = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH && !used.has(key(x, y)) && sqKind(x, y) !== 'water';
+  const placed = [], put = (x, y, name) => { used.add(key(x, y)); placed.push([x, y, name]); };
+  const near = (x, y) => placed.some(([a, b]) => Math.abs(a - x) <= 1 && Math.abs(b - y) <= 1);
+  // one icon beside each landmark, from its kind or name
+  for (const t of state.towns.filter(t => t.kind === 'landmark')){
+    const name = iconFor(t);
+    const spot = [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1],[1,1],[-1,1]].map(([dx, dy]) => [t.x+dx, t.y+dy]).find(([x, y]) => free(x, y) && !near(x, y));
+    if (spot) put(spot[0], spot[1], name);
+  }
+  // a few peaks on mountain squares that touch a route, like the ranges drawn along HGSS routes
+  let extra = 0;
+  for (const p of routePaths()) for (const q of p.squares){
+    if (extra >= 6) break;
+    for (const [dx, dy] of [[0,-1],[1,0],[-1,0],[0,1]]){
+      const x = q.x+dx, y = q.y+dy;
+      if (free(x, y) && sqKind(x, y) === 'mountain' && !near(x, y) && hash(x, y) > .4){ put(x, y, 'mountain'); extra++; break; }
+    }
+  }
+  for (const [x, y, name] of placed) drawLandmarkIcon(name, x*TILE, y*TILE);
+}
 function iconFor(t){
   const k = (t.lmKind || '') + ' ' + t.name;
   if (/peak|mount|mt\b|mt\.|hill|butte|ridge|volcano|kop|berg|summit|massif|crater|canyon|gorge/i.test(k)) return 'mountain';
   if (/lake|dam|reservoir|fall|bay|spring|lagoon|river|beach|cape|island|glacier/i.test(k)) return 'water';
-  if (/park|forest|reserve|wood|garden|zoo|dune|desert|valley|cave/i.test(k)) return 'tree';
+  if (/park|forest|reserve|wood|garden|zoo|valley/i.test(k)) return 'tree';
+  if (/cave|cavern|tunnel|mine|dune|desert|rock|ruin/i.test(k)) return 'tower';
   return 'tower';
 }
-function drawLandmarkIcon(t, X, Y){
-  const name = iconFor(t), rows = ICONS[name], col = ICON_COL[name];
+function drawLandmarkIcon(name, X, Y){
+  const rows = ICONS[name], col = ICON_COL[name];
   for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++){
     const ch = rows[y][x]; if (ch === '.') continue;
     // a 1-pixel light outline around the icon so it reads on any ground
     px(X + x, Y + y, 1, 1, col[ch]);
-  }
-  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++){
-    if (rows[y][x] !== '.') continue;
-    const nb = [[1,0],[-1,0],[0,1],[0,-1]].some(([dx, dy]) => { const r = rows[y+dy]; return r && r[x+dx] && r[x+dx] !== '.'; });
-    if (nb) px(X + x, Y + y, 1, 1, '#f8f8f0');
   }
 }
 
@@ -2021,6 +2050,7 @@ function render(){
   if (!rv) drawAnts();
   drawWeather();
   drawClouds();
+  if (!rv) drawDecor();
   // markers
   const boxes = {};
   for (const kind of ['landmark', 'town', 'city']) state.towns.filter(t => t.kind === kind).forEach(t => {
