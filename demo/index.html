@@ -1994,10 +1994,22 @@ const ICONS = {
   mountain:['...D....','..DLD...','..DLGD.D','.DLGGDDL','.DGGGGDG','DGGGGGGD','DDDDDDDD','........'],
   water:   ['........','..DDDD..','.DWWWWD.','DWWLWWWD','DWWWWLWD','.DWWWWD.','..DDDD..','........'],
   tree:    ['..DDD...','.DGGGD..','DGLGGGD.','DGGGGGD.','.DGGGD..','..DTD...','..DTD...','........'],
-  tower:   ['..DDDD..','.DBBBBD.','DBBBBBBD','DBBDDBBD','DBD..DBD','DD....DD','........','........']
+  tower:   ['..DDDD..','.DBBBBD.','DBBBBBBD','DBBDDBBD','DBD..DBD','DD....DD','........','........'],
+  snowpeak:['...D....','..DWD...','..DWWD.D','.DWGGDDW','.DGGGGDG','DGGGGGGD','DDDDDDDD','........'],
+  volcano: ['..S.S...','...S....','..DRD...','.DRRBD..','.DBBBBD.','DBBBBBBD','DDDDDDDD','........'],
+  bridge:  ['........','DDDDDDDD','BBBBBBBB','D.D..D.D','DWWDDWWD','WWWWWWWW','........','........'],
+  ruins:   ['........','.D...D..','DGD.DGD.','DGD.DGDD','DGDDDGDG','DGGGGGGD','DDDDDDDD','........'],
+  light:   ['...DD...','..DYYD..','...DD...','..DWRD..','..DRWD..','..DWRD..','.DDDDDD.','........'],
+  building:['...DD...','..DRRD..','.DRRRRD.','DDDDDDDD','.DWDDWD.','.DWDDWD.','.DDDDDD.','........'],
+  pine:    ['...D....','..DGD...','..DGGD..','.DGGLGD.','.DGGGGD.','DGGGGGGD','...TT...','........'],
+  palm:    ['.DD..DD.','DGGDDGGD','..DGGD..','...TD...','...TD...','...TD...','..TTTT..','........']
 };
 const ICON_COL = { mountain:{ D:'#6b6b6b', L:'#e0e0e0', G:'#a8a8a8' }, water:{ D:'#2c7ca8', W:'#51bada', L:'#c8f0ff' },
-                   tree:{ D:'#2e7a4e', G:'#4aa56b', L:'#7cd09a', T:'#8a5a30' }, tower:{ D:'#7a5434', B:'#c39269' } };
+                   tree:{ D:'#2e7a4e', G:'#4aa56b', L:'#7cd09a', T:'#8a5a30' }, tower:{ D:'#7a5434', B:'#c39269' },
+                   snowpeak:{ D:'#6b6b6b', W:'#ffffff', G:'#a8a8a8' }, volcano:{ D:'#5a3a2a', R:'#f05030', B:'#9a6a4a', S:'#b0b0b0' },
+                   bridge:{ D:'#6a4a2a', B:'#c39269', W:'#51bada' }, ruins:{ D:'#5a5a5a', G:'#c8c0a8' },
+                   light:{ D:'#525252', Y:'#ffe060', W:'#ffffff', R:'#e04848' }, building:{ D:'#525252', R:'#d05050', W:'#e8e0d0' },
+                   pine:{ D:'#245a3a', G:'#3a8a58', L:'#6cc08a', T:'#8a5a30' }, palm:{ D:'#2e7a4e', G:'#58b870', T:'#9a6a3a' } };
 function drawDecor(){
   if (mapStyle() !== 'hgss') return;
   const used = new Set(), key = (x, y) => y*MW + x;
@@ -2024,12 +2036,19 @@ function drawDecor(){
   for (const [x, y, name] of placed) drawLandmarkIcon(name, x*TILE, y*TILE);
 }
 function iconFor(t){
-  const k = (t.lmKind || '') + ' ' + t.name;
-  if (/peak|mount|mt\b|mt\.|hill|butte|ridge|volcano|kop|berg|summit|massif|crater|canyon|gorge/i.test(k)) return 'mountain';
-  if (/lake|dam|reservoir|fall|bay|spring|lagoon|river|beach|cape|island|glacier/i.test(k)) return 'water';
+  const k = (t.lmKind || '') + ' ' + t.name, cl = state.climate ? kgOf(sqClimate(t.x, t.y)) : '';
+  if (/volcano|crater|caldera/i.test(k)) return 'volcano';
+  if (/glacier|icefield|snow/i.test(k) || (/peak|mount|mt\b|mt\.|summit|massif/i.test(k) && cl[0] === 'E')) return 'snowpeak';
+  if (/peak|mount|mt\b|mt\.|hill|butte|ridge|kop|berg|summit|massif|canyon|gorge|mesa/i.test(k)) return 'mountain';
+  if (/bridge|viaduct|causeway/i.test(k)) return 'bridge';
+  if (/lighthouse|light station/i.test(k)) return 'light';
+  if (/ruin|archaeolog|ancient|temple|pyramid|fort\b|fortress|castle|monument|heritage/i.test(k)) return 'ruins';
+  if (/museum|palace|tower|cathedral|monastery|mosque|church|observatory|stadium|university/i.test(k)) return 'building';
+  if (/beach|island|lagoon|atoll/i.test(k) && cl[0] === 'A') return 'palm';
+  if (/lake|dam|reservoir|fall|bay|spring|lagoon|river|beach|cape|island/i.test(k)) return 'water';
+  if (/forest|wood|taiga|pine|reserve/i.test(k) && /^(D|E|Cfc)/.test(cl)) return 'pine';
   if (/park|forest|reserve|wood|garden|zoo|valley/i.test(k)) return 'tree';
-  if (/cave|cavern|tunnel|mine|dune|desert|rock|ruin/i.test(k)) return 'tower';
-  return 'tower';
+  return 'tower';                                      // cave / rock: the fallback for anything else
 }
 function drawLandmarkIcon(name, X, Y){
   const rows = ICONS[name], col = ICON_COL[name];
@@ -2293,7 +2312,12 @@ document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
   state.tool = b.dataset.tool; state.linkFrom = null; render(); showInfo();
 });
 $('showGrid').onchange = render;
-$('mapStyle').onchange = () => { render(); scheduleSave(); };
+const STYLE_ROUTE_DEFAULT = { gen3:100 };
+$('mapStyle').onchange = () => {
+  const v = STYLE_ROUTE_DEFAULT[mapStyle()] ?? 75;
+  $('routeOpacity').value = v; $('routeOpacityOut').textContent = v + '%';
+  render(); scheduleSave();
+};
 $('routeOpacity').oninput = () => { $('routeOpacityOut').textContent = $('routeOpacity').value + '%'; render(); scheduleSave(); };
 $('showRivers').onchange = render;
 $('flavorNames').onchange = () => {
