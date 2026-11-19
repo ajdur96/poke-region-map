@@ -1645,12 +1645,12 @@ const STYLE_PAL = {
            coast:'#3c8840', foam:'#e8f8ff', shallow:'#68c8f0', river:'#58b0e8' },
   gen3:{ bands:['#007300', '#39ac08', '#62d500', '#acee31', '#eee673'], peak:'#eee6ac', peakLo:'#cdcd94',
          coast:'#006200', foam:'#ffffff', river:'#4a9ce6',
-         water:['#9cd5ff', '#94cdf8', '#8cc4f0'], dash:'#b4e2ff' }
+         water:['#9cd5ff', '#94cdf8', '#8cc4f0'], stripes:['#9cd5ff', '#a4b4ff'], dash:'#b4e2ff' }
 };
 // Per-style route and marker drawing (Pixelated and Sinnoh share the original look)
 const ROUTE_LOOK = {
   default:{ out:3, fill:2, center:0 },
-  gen3:{ out:4, fill:3, center:1, rOut:'#c88200', rFill:'#e6a400', rCtr:'#f6d552', sOut:'#2060c8', sFill:'#4a9ce6', sCtr:'#9cd5ff' }
+  gen3:{ out:4, fill:4, center:0, rOut:'#e6a400', rFill:'#e6a400', sOut:'#5294d5', sFill:'#5294d5', landmark:'gen3' }
 };
 const routeLook = () => ROUTE_LOOK[mapStyle()] || ROUTE_LOOK.default;
 const hexRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
@@ -1693,6 +1693,7 @@ function paintSmoothLand(style){
     const cw = coast ? coast[i] : 2;
     const wet = !mixed[sub] ? t[sub] === T.SEA : cw < 2 ? cw === 1 : bil(landSoft, x, y) < .5;
     if (wet){                                        // water: smooth depth bands (lakes are shallower)
+      if (P.stripes){ put(i, P.stripes[y & 1]); continue; }   // Gen 3: flat sea in thin horizontal stripes
       const dp = bil(depth, x, y) + .5;
       put(i, bil(lake, x, y) >= .5 ? (dp < 2 ? W_SH : W_MID) : dp < 2 ? W_SH : dp < 4 ? W_MID : W_DEEP);
       continue;
@@ -1894,7 +1895,10 @@ function drawMarker(t){
   else if (t.kind === 'city'){ b = { x0:X-1, y0:Y-1, w:10, h:10 }; c = [PAL.cOut, PAL.cFill, PAL.cHi]; }
   else if (t.kind === 'town'){ b = { x0:X, y0:Y, w:8, h:8 }; c = [PAL.tOut, PAL.tFill, PAL.tHi]; }
   else { b = { x0:X, y0:Y+2, w:8, h:5 }; c = [PAL.lOut, PAL.lFill, PAL.lHi]; }
-  if (mapStyle() === 'gen3'){                          // rounded, glossy markers like the GBA maps
+  if (mapStyle() === 'gen3' && t.kind === 'landmark'){  // FireRed-style landmark: a small pale-blue square, white border
+    b = { x0:X+1, y0:Y+1, w:6, h:6 };
+    px(b.x0, b.y0, 6, 6, '#ffffff'); px(b.x0+1, b.y0+1, 4, 4, '#7cacf6'); px(b.x0+1, b.y0+1, 4, 1, '#a4c8ff');
+  } else if (mapStyle() === 'gen3'){                   // rounded, glossy markers like the GBA maps
     px(b.x0+1, b.y0, b.w-2, b.h, c[0]); px(b.x0, b.y0+1, b.w, b.h-2, c[0]);
     px(b.x0+1, b.y0+1, b.w-2, b.h-2, c[1]);
     px(b.x0+2, b.y0+b.h-2, b.w-4, 1, 'rgba(0,0,0,.25)'); px(b.x0+b.w-2, b.y0+2, 1, b.h-4, 'rgba(0,0,0,.25)');   // shade
