@@ -1643,8 +1643,8 @@ const STYLE_PAL = {
   sinnoh:{ land:'#80c868', land2:'#70b858', landHi:'#98d878', hill:'#a8d070', hillLo:'#88b858',
            mtn:'#c09860', mtnHi:'#dcb880', mtnLo:'#987040', snow:'#f4f8fc', snowLo:'#c4d0e0',
            coast:'#3c8840', foam:'#e8f8ff', shallow:'#68c8f0', river:'#58b0e8' },
-  hgss:{ rings:['#c8e888', '#98d068', '#70b850', '#4c9840', '#38783a'], coast:'#f8f8e8', river:'#40a0e0',
-         seaRings:['#f0f8ff', '#a8d8f8', '#68b0f0', '#3c88e0', '#2868c8'], dash:'#5898e8' },
+  hgss:{ rings:['#d0ec90', '#a8d870', '#80c458'], heights:['#5ca848', '#408838', '#2e6a30'], coast:'#f8f8e8', river:'#40a0e0',
+         seaRings:['#c8e8ff', '#98d0f8', '#68b0f0', '#3c88e0', '#2868c8'], dash:'#5898e8' },
   gen3:{ bands:['#007300', '#39ac08', '#62d500', '#acee31', '#eee673'], peak:'#eee6ac', peakLo:'#cdcd94',
          coast:'#006200', foam:'#ffffff', river:'#4a9ce6',
          water:['#9cd5ff', '#94cdf8', '#8cc4f0'], stripes:['#9cd5ff', '#a4b4ff'], dash:'#b4e2ff' }
@@ -1747,9 +1747,10 @@ function paintSmoothLand(style){
     const toWet = bfs(i => !isLand[i]), toDry = bfs(i => isLand[i]);
     for (let i = 0; i < W*H; i++){
       if (isLand[i]){
-        const dc = toWet[i], ring = dc <= 2 ? 0 : dc <= 5 ? 1 : dc <= 9 ? 2 : dc <= 14 ? 3 : 4;
-        const lift = landPx[i] >= 3.45 ? 2 : landPx[i] >= 2.4 ? 1 : 0;           // high ground reads a ring or two further in
-        put(i, P.rings[Math.min(4, ring + lift)]);
+        // light rings along the shore fading to the lowland green; high ground stacks darker contour rings
+        const dc = toWet[i], r = landPx[i];
+        const h = r >= 3.45 ? 2 : r >= 2.5 ? 1 : r >= 1.7 ? 0 : -1;
+        put(i, h >= 0 ? P.heights[h] : P.rings[dc <= 2 ? 0 : dc <= 5 ? 1 : 2]);
       } else if (seaPx[i]){
         const dl = toDry[i], ring = dl <= 1 ? 0 : dl <= 4 ? 1 : dl <= 8 ? 2 : dl <= 14 ? 3 : 4;
         put(i, P.seaRings[ring]);
