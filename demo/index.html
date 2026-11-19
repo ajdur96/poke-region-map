@@ -942,15 +942,10 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
                    namedAfter:c.kind || (c.natural ? 'natural feature' : 'landmark'), local:c.local, romanized:c.romanized });
     }
   }
-  let tries = 0, k = 1;
-  while (towns.filter(t => t.kind !== 'landmark').length < count && tries++ < 800){
-    const c = { x:1 + Math.floor(rng()*(MW-2)), y:1 + Math.floor(rng()*(MH-2)) };
-    if (sqKind(c.x, c.y) === 'water' || !gapOK(c, towns) || !towns.every(o => footprint(o).every(f => dist(f, c) >= spacing*0.8))) continue;
-    towns.push({ id:newId(), name:`Town ${k++}`, x:c.x, y:c.y, kind:'town', size:1, score:0 });
-  }
   const nAfter = towns.filter(t => t.namedAfter && fresh.indexOf(t) < 0).length;
   if (nAfter) state.notes.push(`${nAfter} town${nAfter > 1 ? 's are' : ' is'} named after nearby real features (hills, dams, parks), since too few towns were found.`);
-  if (k > 1) state.notes.push(`Only ${nTowns() - (k-1)} real names fit this area — added ${k-1} placeholder town${k > 2 ? 's' : ''} ("Town #"). Try fewer towns or a bigger frame.`);
+  // No made-up placeholders: if real names run out, the region simply has fewer towns
+  if (nTowns() < count) state.notes.push(`Only ${nTowns()} real place${nTowns() === 1 ? "" : "s"} fit${nTowns() === 1 ? "s" : ""} this area, so the map has ${nTowns()} town${nTowns() === 1 ? '' : 's'} instead of ${count}. A bigger frame finds more.`);
   if (wantLandmarks){
     const nLm = Math.max(lockedL.length, Math.round(count/2));
     const isLm = () => towns.filter(t => t.kind === 'landmark').length;
