@@ -134,7 +134,7 @@
       <label><input type="checkbox" id="showClouds" checked> Clouds</label>
       <label><input type="checkbox" id="showWeather"> Weather</label>
       <label>Style <select id="mapStyle" style="font-size:13px;padding:3px;border-radius:5px">
-        <option value="pixel">Pixelated</option><option value="sinnoh">Sinnoh (smooth)</option><option value="gen3">Gen 3 (smooth)</option></select></label>
+        <option value="pixel">Pixelated</option><option value="sinnoh">Sinnoh (smooth)</option><option value="gen3">Gen 3 (smooth)</option><option value="hgss">HGSS (smooth)</option></select></label>
       <label>Routes see-through <input type="range" id="routeOpacity" min="20" max="100" value="75" style="width:90px;vertical-align:middle"> <span id="routeOpacityOut">75%</span> solid</label>
       <label>Theme <select id="theme" style="font-size:13px;padding:3px;border-radius:5px">
         <option value="day">Day</option><option value="night">Night</option><option value="live">Live (real sunlight)</option>
@@ -1195,13 +1195,13 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
       if (isLm() >= nLm) break;
       // notable landmarks may sit right next to a town (just not on it); keep landmarks 3 apart from each other
       if (towns.every(o => footprint(o).every(f => cheb(f, l) >= (o.kind === 'landmark' ? 3 : 1))))
-        towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural, lat:l.lat, lon:l.lon, local:l.local, romanized:l.romanized });
+        towns.push({ id:newId(), name:l.name, x:l.x, y:l.y, kind:'landmark', size:1, score:l.score, fixed:l.natural, lmKind:l.kind, lat:l.lat, lon:l.lon, local:l.local, romanized:l.romanized });
     }
     // 2) then leftover settlements
     for (const c of cands){
       if (isLm() >= nLm) break;
       if (!chosen.includes(c) && towns.every(o => footprint(o).every(f => cheb(f, c) >= 2)))
-        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score, lat:c.lat, lon:c.lon, local:c.local, romanized:c.romanized });
+        towns.push({ id:newId(), name:c.name, x:c.x, y:c.y, kind:'landmark', size:1, score:c.score, lmKind:c.kind, lat:c.lat, lon:c.lon, local:c.local, romanized:c.romanized });
     }
   }
   return towns;
@@ -1666,6 +1666,8 @@ const STYLE_PAL = {
   sinnoh:{ land:'#80c868', land2:'#70b858', landHi:'#98d878', hill:'#a8d070', hillLo:'#88b858',
            mtn:'#c09860', mtnHi:'#dcb880', mtnLo:'#987040', snow:'#f4f8fc', snowLo:'#c4d0e0',
            coast:'#3c8840', foam:'#e8f8ff', shallow:'#68c8f0', river:'#58b0e8' },
+  hgss:{ rings:['#c8e888', '#98d068', '#70b850', '#4c9840', '#38783a'], coast:'#f8f8e8', river:'#40a0e0',
+         seaRings:['#f0f8ff', '#a8d8f8', '#68b0f0', '#3c88e0', '#2868c8'], dash:'#5898e8' },
   gen3:{ bands:['#007300', '#39ac08', '#62d500', '#acee31', '#eee673'], peak:'#eee6ac', peakLo:'#cdcd94',
          coast:'#006200', foam:'#ffffff', river:'#4a9ce6',
          water:['#9cd5ff', '#94cdf8', '#8cc4f0'], stripes:['#9cd5ff', '#a4b4ff'], dash:'#b4e2ff' }
@@ -1673,13 +1675,14 @@ const STYLE_PAL = {
 // Per-style route and marker drawing (Pixelated and Sinnoh share the original look)
 const ROUTE_LOOK = {
   default:{ out:3, fill:2, center:0 },
+  hgss:{ out:3, fill:2, center:0, round:true, rOut:'#f8f8f0', rFill:'#48b8a0', sOut:'#f8f8f0', sFill:'#58a8e8' },
   gen3:{ out:4, fill:4, center:0, rOut:'#e6a400', rFill:'#e6a400', sOut:'#5294d5', sFill:'#5294d5', landmark:'gen3' }
 };
 const routeLook = () => ROUTE_LOOK[mapStyle()] || ROUTE_LOOK.default;
 const hexRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 function paintSmoothLand(style){
   const P = Object.fromEntries(Object.entries(STYLE_PAL[style]).map(([k, v]) => [k, Array.isArray(v) ? v.map(hexRgb) : hexRgb(v)]));
-  const gen3 = style === 'gen3';
+  const gen3 = style === 'gen3', hgss = style === 'hgss';
   const t = state.terrain, W = SW*SP, H = SH*SP;
   // fields per sub-cell: land 0/1; relief 1–4 (sea counts as lowland so coasts don't grow fake bands), lightly blurred
   const land = new Float32Array(SW*SH), rel0 = new Float32Array(SW*SH), rel = new Float32Array(SW*SH);
@@ -1704,7 +1707,7 @@ function paintSmoothLand(style){
     return f[i]*(1-fx)*(1-fy) + f[i+1]*fx*(1-fy) + f[i+SW]*(1-fx)*fy + f[i+SW+1]*fx*fy;
   };
   const polar = state.climate ? (() => { let p = 0, n = 0; for (const v of state.climate) if (v){ n++; if (v >= 30) p++; } return n && p/n > .3; })() : false;
-  const img = sctx.getImageData(0, 0, W, H), d = img.data, isLand = new Uint8Array(W*H), blobs = makeBlobField(), landPx = new Float32Array(W*H);
+  const img = sctx.getImageData(0, 0, W, H), d = img.data, isLand = new Uint8Array(W*H), blobs = makeBlobField(), landPx = new Float32Array(W*H), seaPx = new Uint8Array(W*H);
   // water fields: distance to land (in sub-cells) and lake mask, interpolated like the land
   const toLand = bfsSub(i => t[i] !== T.SEA), depth = new Float32Array(SW*SH), lake = new Float32Array(SW*SH);
   for (let i = 0; i < SW*SH; i++){ depth[i] = Math.min(toLand[i], 8); lake[i] = state.lake && state.lake[i] ? 1 : 0; }
@@ -1717,6 +1720,7 @@ function paintSmoothLand(style){
     const wet = !mixed[sub] ? t[sub] === T.SEA : cw < 2 ? cw === 1 : bil(landSoft, x, y) < .5;
     if (wet){                                        // water: smooth depth bands (lakes are shallower)
       if (P.stripes){ put(i, P.stripes[y & 1]); continue; }   // Gen 3: flat sea in thin horizontal stripes
+      if (hgss){ seaPx[i] = 1; continue; }                     // HGSS: rings painted below, from the real shore
       const dp = bil(depth, x, y) + .5;
       put(i, bil(lake, x, y) >= .5 ? (dp < 2 ? W_SH : W_MID) : dp < 2 ? W_SH : dp < 4 ? W_MID : W_DEEP);
       continue;
@@ -1724,7 +1728,7 @@ function paintSmoothLand(style){
     isLand[i] = 1;
     const r = bil(rel, x, y), lit = (bil(rel, x+1, y+1) - bil(rel, x-1, y-1));     // >0: slope facing the north-west light
     let c;
-    if (gen3){ landPx[i] = r; continue; }               // Gen 3 bands are painted below, once the coast distance is known
+    if (gen3 || hgss){ landPx[i] = r; continue; }               // Gen 3 bands are painted below, once the coast distance is known
     if (r >= 3.45 || (polar && r >= 2.6)) c = lit < -.12 ? P.snowLo : P.snow;
     else if (r >= 2.5) c = lit > .1 ? P.mtnHi : lit < -.1 ? P.mtnLo : P.mtn;
     else if (r >= 1.6) c = lit < -.08 ? P.hillLo : P.hill;
@@ -1755,6 +1759,26 @@ function paintSmoothLand(style){
       put(i, band >= 5 ? (bil(rel, (i % W) + 1, ((i/W) | 0) + 1) < r - .05 ? P.peakLo : P.peak) : P.bands[Math.min(band, 4)]);
     }
   }
+  if (hgss){
+    // two distance fields on the 1-pixel grid: land pixels to the nearest water, water pixels to the nearest land
+    const bfs = src => { const dd = new Uint8Array(W*H).fill(255), qq = [];
+      for (let i = 0; i < W*H; i++) if (src(i)){ dd[i] = 0; qq.push(i); }
+      for (let h = 0; h < qq.length; h++){ const i = qq[h], x = i % W, y = (i/W) | 0;
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){ const X = x+dx, Y = y+dy; if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+          const j = Y*W + X; if (dd[j] > dd[i] + 1){ dd[j] = dd[i] + 1; qq.push(j); } } }
+      return dd; };
+    const toWet = bfs(i => !isLand[i]), toDry = bfs(i => isLand[i]);
+    for (let i = 0; i < W*H; i++){
+      if (isLand[i]){
+        const dc = toWet[i], ring = dc <= 2 ? 0 : dc <= 5 ? 1 : dc <= 9 ? 2 : dc <= 14 ? 3 : 4;
+        const lift = landPx[i] >= 3.45 ? 2 : landPx[i] >= 2.4 ? 1 : 0;           // high ground reads a ring or two further in
+        put(i, P.rings[Math.min(4, ring + lift)]);
+      } else if (seaPx[i]){
+        const dl = toDry[i], ring = dl <= 1 ? 0 : dl <= 4 ? 1 : dl <= 8 ? 2 : dl <= 14 ? 3 : 4;
+        put(i, P.seaRings[ring]);
+      }
+    }
+  }
   // rivers: 1-pixel lines joining neighbouring river sub-cells
   if (state.river && $('showRivers').checked){
     const line = (x0, y0, x1, y1) => { const n = Math.max(Math.abs(x1-x0), Math.abs(y1-y0)) || 1;
@@ -1774,7 +1798,7 @@ function paintSmoothLand(style){
     const i = y*W + x, nb = [[1,0],[-1,0],[0,1],[0,-1]].map(([dx, dy]) => { const X = x+dx, Y = y+dy; return X < 0 || Y < 0 || X >= W || Y >= H ? -1 : isLand[Y*W+X]; });
     if (isLand[i] && nb.includes(0)) edge[i] = 1; else if (!isLand[i] && nb.includes(1)) edge[i] = 2;
   }
-  for (let i = 0; i < W*H; i++) if (edge[i] && !(gen3 && edge[i] === 2)) put(i, edge[i] === 1 ? P.coast : P.foam);
+  for (let i = 0; i < W*H; i++) if (edge[i] && !((gen3 || hgss) && edge[i] === 2)) put(i, edge[i] === 1 ? P.coast : P.foam);
   anim.foam = [];
   for (let i = 0; i < W*H; i++) if (edge[i] === 2 && hash(i % W, (i/W) | 0) > .85) anim.foam.push([i % W, (i/W) | 0, Math.floor(hash((i/W) | 0, i % W)*64)]);
   anim.dashes = anim.dashes.filter(([X, Y]) => !isLand[Y*W + X] && !isLand[Y*W + X + 2]);
@@ -1835,6 +1859,15 @@ function buildRouteLayer(){
   for (const b of blocks) rpx(b.x-o, b.y-o, o*2, o*2, b.water ? C3('sOut') : C3('rOut'));
   for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, f); rpx(x, y, w, h, s.water ? C3('sFill') : C3('rFill')); }
   for (const b of blocks.filter(b => !b.sel)) rpx(b.x-f, b.y-f, f*2, f*2, b.water ? C3('sFill') : C3('rFill'));
+  if (L.round){                                        // HGSS: rounded corners where a route turns or ends
+    const on = new Set(blocks.map(b => b.x + ',' + b.y));
+    for (const b of blocks){
+      for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+        if (on.has((b.x + dx*TILE) + ',' + b.y) || on.has(b.x + ',' + (b.y + dy*TILE))) continue;
+        rctx.clearRect(dx < 0 ? b.x-o : b.x+o-1, dy < 0 ? b.y-o : b.y+o-1, 1, 1);
+      }
+    }
+  }
   if (c){                                              // Gen 3: a lighter stripe down the middle of each route
     for (const s of segs.filter(s => !s.sel)){ const [x, y, w, h] = segRect(s, c); rpx(x, y, w, h, s.water ? C3('sCtr') : C3('rCtr')); }
     for (const b of blocks.filter(b => !b.sel)) rpx(b.x-c, b.y-c, c*2, c*2, b.water ? C3('sCtr') : C3('rCtr'));
@@ -1918,7 +1951,15 @@ function drawMarker(t){
   else if (t.kind === 'city'){ b = { x0:X-1, y0:Y-1, w:10, h:10 }; c = [PAL.cOut, PAL.cFill, PAL.cHi]; }
   else if (t.kind === 'town'){ b = { x0:X, y0:Y, w:8, h:8 }; c = [PAL.tOut, PAL.tFill, PAL.tHi]; }
   else { b = { x0:X, y0:Y+2, w:8, h:5 }; c = [PAL.lOut, PAL.lFill, PAL.lHi]; }
-  if (mapStyle() === 'gen3' && t.kind === 'landmark'){  // FireRed-style landmark: a small pale-blue square, white border
+  if (mapStyle() === 'hgss'){
+    if (t.kind === 'landmark'){ b = { x0:X, y0:Y, w:8, h:8 }; drawLandmarkIcon(t, X, Y); }
+    else {
+      const [roof, band, wall] = t.kind === 'city' ? ['#f06070', '#c02838', '#f8d0b0'] : ['#f88898', '#d04050', '#f8e0c8'];
+      px(b.x0+1, b.y0, b.w-2, b.h, '#f8f8f0'); px(b.x0, b.y0+1, b.w, b.h-2, '#f8f8f0');            // light rim
+      const ix = b.x0+1, iy = b.y0+1, iw = b.w-2, ih = b.h-2, top = Math.max(1, Math.floor(ih/2) - 1);
+      px(ix, iy, iw, top, roof); px(ix, iy+top, iw, 1, band); px(ix, iy+top+1, iw, ih-top-1, wall);
+    }
+  } else if (mapStyle() === 'gen3' && t.kind === 'landmark'){  // FireRed-style landmark: a small pale-blue square, white border
     b = { x0:X+1, y0:Y+1, w:6, h:6 };
     px(b.x0, b.y0, 6, 6, '#ffffff'); px(b.x0+1, b.y0+1, 4, 4, '#7cacf6'); px(b.x0+1, b.y0+1, 4, 1, '#a4c8ff');
   } else if (mapStyle() === 'gen3'){                   // rounded, glossy markers like the GBA maps
@@ -1937,6 +1978,36 @@ function drawMarker(t){
     px(lx-1, ly-1, 5, 5, '#3a2a00'); px(lx, ly+1, 3, 2, '#ffd040'); px(lx, ly, 1, 1, '#ffd040'); px(lx+2, ly, 1, 1, '#ffd040');
   }
   return b;
+}
+
+// HGSS-style picture icons for landmarks (original 8×8 pixel art), chosen from the landmark's kind or name
+const ICONS = {
+  mountain:['...X....','..XWX...','..XWWX..','.XXXWX..','.XXXXXX.','XXXXXXXX','XXXXXXXX','........'],
+  water:   ['........','..XXXX..','.XWWWWX.','XWWXWWWX','XWWWWXWX','.XWWWWX.','..XXXX..','........'],
+  tree:    ['...XX...','..XXXX..','.XXWXXX.','.XXXXWX.','..XXXX..','...TT...','...TT...','..TTTT..'],
+  tower:   ['...XX...','..XWWX..','..XXXX..','..XWWX..','..XXXX..','.XWWWWX.','.XXXXXX.','XXXXXXXX']
+};
+const ICON_COL = { mountain:{ X:'#c04848', W:'#f8f8f8' }, water:{ X:'#2878d0', W:'#a8e0ff' },
+                   tree:{ X:'#2c8a3c', W:'#78d070', T:'#8a5a30' }, tower:{ X:'#7058a8', W:'#e8e0ff' } };
+function iconFor(t){
+  const k = (t.lmKind || '') + ' ' + t.name;
+  if (/peak|mount|mt\b|mt\.|hill|butte|ridge|volcano|kop|berg|summit|massif|crater|canyon|gorge/i.test(k)) return 'mountain';
+  if (/lake|dam|reservoir|fall|bay|spring|lagoon|river|beach|cape|island|glacier/i.test(k)) return 'water';
+  if (/park|forest|reserve|wood|garden|zoo|dune|desert|valley|cave/i.test(k)) return 'tree';
+  return 'tower';
+}
+function drawLandmarkIcon(t, X, Y){
+  const name = iconFor(t), rows = ICONS[name], col = ICON_COL[name];
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++){
+    const ch = rows[y][x]; if (ch === '.') continue;
+    // a 1-pixel light outline around the icon so it reads on any ground
+    px(X + x, Y + y, 1, 1, col[ch]);
+  }
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++){
+    if (rows[y][x] !== '.') continue;
+    const nb = [[1,0],[-1,0],[0,1],[0,-1]].some(([dx, dy]) => { const r = rows[y+dy]; return r && r[x+dx] && r[x+dx] !== '.'; });
+    if (nb) px(X + x, Y + y, 1, 1, '#f8f8f0');
+  }
 }
 
 function bracket(b){
