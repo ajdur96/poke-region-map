@@ -1733,7 +1733,7 @@ function paintSmoothLand(style){
     else if (r >= 2.5) c = lit > .1 ? P.mtnHi : lit < -.1 ? P.mtnLo : P.mtn;
     else if (r >= 1.6) c = lit < -.08 ? P.hillLo : P.hill;
     else {                                             // lowland: soft lighter and darker patches
-      const blob = bil(blobs, x, y);
+      const blob = exportMode ? .5 : bil(blobs, x, y);   // export: plain lowland, so the map fits Emerald's 256 tiles
       c = blob > .62 ? P.landHi : blob < .3 ? P.land2 : P.land;
     }
     put(i, c);
@@ -1962,7 +1962,7 @@ function drawMarker(t){
     if (t.kind === 'landmark'){                        // small green dot on the route
       b = { x0:X+1, y0:Y+1, w:6, h:6 };
       px(X+2, Y+1, 4, 6, '#525252'); px(X+1, Y+2, 6, 4, '#525252');
-      px(X+3, Y+2, 2, 4, '#73ce94'); px(X+2, Y+3, 4, 2, '#73ce94');
+      px(X+3, Y+2, 2, 4, '#a8f0b8'); px(X+2, Y+3, 4, 2, '#a8f0b8'); px(X+3, Y+3, 1, 1, '#e8fff0');
     } else {                                           // red block, light on top and darker at the bottom
       px(b.x0+1, b.y0, b.w-2, b.h, '#525252'); px(b.x0, b.y0+1, b.w, b.h-2, '#525252');
       const ix = b.x0+1, iy = b.y0+1, iw = b.w-2, ih = b.h-2, top = Math.ceil(ih*.55);
@@ -2051,7 +2051,7 @@ function bracket(b){
 function render(){
   if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
   const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.cover), idOf(state.coast), idOf(state.river), idOf(state.roadEdges),
-              $('showGrid').checked, $('showRivers').checked, mapStyle()].join('|');
+              $('showGrid').checked, $('showRivers').checked, mapStyle(), exportMode].join('|');
   if (sk !== staticKey){ buildStatic(); buildWeatherAnim(); staticKey = sk; }
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
   const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
@@ -3212,11 +3212,16 @@ function emeraldGraphics(){
     if (!keyOf.has(key)){ keyOf.set(key, tiles.length); tiles.push(t); useCount.push(0); }
     const id = keyOf.get(key); useCount[id]++; at.push(id);
   }
+  // tiles under a town or landmark marker are never merged away (merging there clips the markers)
+  const marked = new Set();
+  for (const t of state.towns) for (const f of footprint(t)) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+    marked.add((f.y + 2 + dy)*tw + f.x + 1 + dx);
+  const keepT = new Set(); at.forEach((id, n) => { if (marked.has(n)) keepT.add(id); });
   const alive = tiles.map((_, i) => i), target = tiles.map((_, i) => i);
   const diff = (a, b) => { let n = 0; for (let i = 0; i < 64; i++) if (a[i] !== b[i]) n++; return n; };
   let merged = 0;
   while (alive.length > 255){
-    alive.sort((a, b) => useCount[a] - useCount[b]);
+    alive.sort((a, b) => (keepT.has(a) - keepT.has(b)) || useCount[a] - useCount[b]);
     const v = alive.shift();
     let best = alive[0], bd = 65;
     for (const o of alive){ const dd = diff(tiles[v], tiles[o]); if (dd < bd){ bd = dd; best = o; } }
