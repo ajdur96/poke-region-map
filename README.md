@@ -31,11 +31,18 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 - **Ambient animation:** swaying sea swells, shoreline sparkles and lake glints; drifting cloud shadows (toggle); marching ants along the selected route; and a slide-in location pop-up. Motion stops if your device asks for reduced motion.
 - **Route profiles:** select a route to see its real length in km and an elevation profile (climb, descent, lowest and highest point). The list shows each route's length too.
 - **Place blurbs:** selecting a real town or landmark shows the first two sentences of its Wikipedia article (found near the place's real coordinates, with a link and CC BY-SA credit).
+- **Map styles:** a Style menu with four looks, all on Emerald's 224×120 grid:
+  - **Pixelated** (default): the original blocky look, and the only style that shows land cover.
+  - **Sinnoh (smooth):** green lowland, brown sunlit mountains with snowy peaks, smooth depth-banded water, rounded cloud shadows.
+  - **Gen 3 (smooth):** GBA-style contour bands (dark green coastal rim, brighter inland, yellow on high ground), striped sea, flat orange routes and FireRed-style pale-blue landmark squares.
+  - **HGSS (smooth):** green lowland with tan high ground and brown contour lines, banded blue water, white outlined routes, two-tone red towns, green landmark dots, and small picture icons (mountain, tree, water, cave) beside landmarks and routes.
+  The smooth styles draw land, coasts and rivers one pixel at a time, with the coastline traced from the real OpenStreetMap shoreline (saved with the region; older saves use a softened edge until re-forged). The pokeemerald export uses the selected style.
+- **Routes see-through slider:** from 20% to 100% solid (default 75%), for every style; saved with the region and baked into exports.
 - **Themes:** Day, Night, Pokétch (4-green handheld style), Sepia, and **Live**, which tints the map by the real sun altitude at the region's centre right now (day → golden hour → dusk → twilight → night, refreshed every minute). Saved with the region and included in share links.
 - **Map reveal:** after forging, the terrain sweeps in as soon as it's ready, then routes grow outward from the starting town by travel distance and towns pop in as they're reached. Rerolls replay it; tap the map to skip.
 - **Fast drawing:** terrain and routes are cached as layers; each animation frame only draws the moving pixels (about 100 operations instead of ~7,400).
 - **Emerald-style cursor:** D-pad or arrow keys, with a pop-up showing the name of the square under the cursor.
-- **Editing:** move, add, delete and link towns; paint land, water and mountains; rename, resize and rotate cities.
+- **Editing:** move, add, delete and link towns; add landmarks (+ LANDMARK); paint land, water and mountains; rename, resize and rotate cities.
 - **Region title bar:** an auto-suggested region name above the town map, from the most prominent named feature (a mountain range, then a sea or bay, then a landform, then the biggest city): e.g. WASATCH, CHESAPEAKE. Tap it to rename.
 - **Towns & routes list:** every town, landmark and route in one list. Tap a row to jump the cursor there, ✎ to rename.
 - **Real-map overlay:** lay the finished town map over the live map at its true position and rotation, with an opacity slider, to check it against the real geography.
@@ -65,7 +72,7 @@ How it fits into Emerald:
 
 - **Existing map-section IDs are reused, not added.** MAPSEC IDs are referenced all over the game and stored in one byte (213 already exist), so your towns take the Hoenn town slots in journey order (your starting town becomes `MAPSEC_LITTLEROOT_TOWN`), routes take `MAPSEC_ROUTE_101` onward, and landmarks take cave/landmark slots like `MAPSEC_MT_CHIMNEY`. Only names and positions change, so everything still compiles. `region_export.json` and the README in the ZIP list the mapping.
 - **Names** are romanized if needed, converted to the game's character set and fit to 16 characters (`MAP_NAME_LENGTH`), abbreviating common words first (MT., L., R., XING…).
-- **Map picture** in Emerald's exact format: a 64×64 affine tilemap (`map.bin`, one byte per tile, map grid at tile (1, 2)), 8-bit tiles (`map.png`, at most 256; near-duplicates are merged if needed) and a 48-colour palette (`map.pal`) loaded at index 112. Verified with pokeemerald's own `gbagfx`.
+- **Map picture** in Emerald's exact format: a 64×64 affine tilemap (`map.bin`, one byte per tile, map grid at tile (1, 2)), 8-bit tiles (`map.png`, at most 256; near-duplicates are merged if needed, which the smooth Sinnoh style usually needs) and a 48-colour palette (`map.pal`) loaded at index 112. Verified with pokeemerald's own `gbagfx`.
 - The script edits `region_map_sections.json`, rewrites `region_map_layout.h` (keeping your file's declaration), installs the graphics and updates `-num_tiles`. Each changed file is backed up once as `*.forge-backup`.
 - Fly destinations and maps still point at the original Hoenn maps until you build your own; unused Hoenn sections keep their names and positions but aren't on the map.
 - Not yet included: the separate **Pokédex area map** (`graphics/pokedex/region_map.png`), which both projects use on the Pokédex "Area" screen; it still shows Hoenn.
