@@ -134,16 +134,6 @@
       <label><input type="checkbox" id="showClouds" checked> Clouds</label>
       <label><input type="checkbox" id="showWeather"> Weather</label>
       <label><input type="checkbox" id="showCover" checked> Land cover</label>
-      <label title="Trial: how land cover and elevation share the map (smooth styles)">Cover vs relief (trial)
-        <select id="coverMode">
-          <option value="now">Now: lowland fill</option>
-          <option value="A">A · snow recolours mountains</option>
-          <option value="B">B · relief drawn on top</option>
-          <option value="C">C · 50% blend</option>
-          <option value="D">D · texture only</option>
-          <option value="E">E · symbols only</option>
-          <option value="F">F · rules per type</option>
-        </select></label>
       <label>Style <select id="mapStyle" style="font-size:13px;padding:3px;border-radius:5px">
         <option value="pixel">Pixelated</option><option value="sinnoh">Sinnoh (smooth)</option><option value="gen3">Gen 3 (smooth)</option><option value="hgss">HGSS (smooth)</option></select></label>
       <label>Routes see-through <input type="range" id="routeOpacity" min="20" max="100" value="75" style="width:90px;vertical-align:middle"> <span id="routeOpacityOut">75%</span> solid</label>
@@ -164,6 +154,16 @@
       <button data-tool="land">LAND</button>
       <button data-tool="sea">WATER</button>
       <button data-tool="mountain">MOUNTAIN</button>
+    </div>
+    <div class="tools" title="Cover brushes: paint the look only. Elevation, route names and weather stay as they are.">
+      <button data-tool="cv1">FOREST</button>
+      <button data-tool="cv2">WETLAND</button>
+      <button data-tool="cv3">DESERT</button>
+      <button data-tool="cv4">SNOW</button>
+      <button data-tool="cv5">DRY GRASS</button>
+      <button data-tool="cv6">MANGROVE</button>
+      <button data-tool="cv7">TUNDRA</button>
+      <button data-tool="cv0">ERASE</button>
     </div>
     <div class="row">Routes: straight
       <input type="range" id="bendy" min="0" max="100" value="50">
@@ -261,12 +261,16 @@ const TOOL_HINTS = {
   add:'Tap an empty square to found a new town (auto-linked to its nearest neighbour).',
   delete:'Tap a town or a route to remove it.',
   link:'Tap one town, then another, to add or remove a route between them.',
-  land:'Drag to paint land.', sea:'Drag to paint water.', mountain:'Drag to raise mountains.'
+  land:'Drag to paint land.', sea:'Drag to paint water.', mountain:'Drag to raise mountains.',
+  addlm:'Tap an empty square to add a landmark (linked to its nearest town).',
+  ...Object.fromEntries(['forest', 'wetland', 'desert', 'snow', 'dry grass', 'mangrove', 'tundra'].map((n, k) =>
+    ['cv' + (k + 1), `Drag to paint ${n}. Changes the look only: elevation, route names and weather stay as they are.`])),
+  cv0:'Drag to erase land cover back to plain ground. Changes the look only.'
 };
 
 const state = { terrain:null, cover:null, climate:null, coast:null, elev:null, lake:null, sq:null, sqElev:null,
   roadSq:new Float32Array(MW*MH), roadEdges:new Set(), river:null, riverNames:new Map(), gen:null, towns:[], routes:[],
-  startId:null, sel:null, cursor:{x:0, y:0}, tool:'inspect', linkFrom:null, nextId:1, seed:0, ver:0, notes:[] };
+  startId:null, sel:null, cursor:{x:0, y:0}, tool:'inspect', linkFrom:null, nextId:1, seed:0, ver:0, notes:[], coverPaint:null, coverVer:0 };
 
 // ===== Leaflet map + rotatable 28:15 frame + exact scale =====
 // Scale is set as km per grid square. The floor matches 1:50,000 for the 224-px-wide town map at the
@@ -597,14 +601,24 @@ async function buildCover(lc, b){
     const [v, n] = Object.entries(cnt).sort((a, b2) => b2[1] - a[1])[0];
     if (n >= 6 && +v !== copy[i]) cover[i] = +v;
   }
-  state.cover = cover;
+  state.cover = cover; state.coverPaint = null;
   return source;
 }
-// The cover class that fills most of a 28×15 square
-function sqCover(x, y){
-  if (!state.cover) return 0;
+// Hand-painted cover (cover brushes) sits in its own layer: 0 = untouched, 1–7 = a C.* class, 255 = erased to plain ground.
+// It changes only the drawing (and export art); names and weather still read the real data in state.cover.
+const COVER_ERASE = 255;
+function drawCover(){
+  const p = state.coverPaint;
+  if (!p) return state.cover;
+  const o = state.cover ? state.cover.slice() : new Uint8Array(SW*SH);
+  for (let i = 0; i < SW*SH; i++) if (p[i]) o[i] = p[i] === COVER_ERASE ? 0 : p[i];
+  return o;
+}
+// The cover class that fills most of a 28×15 square (of the real data, or of another cover array)
+function sqCover(x, y, cov = state.cover){
+  if (!cov) return 0;
   const cnt = new Array(COVER_NAMES.length).fill(0);
-  for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) cnt[state.cover[(y*SUB+sy)*SW + x*SUB+sx]]++;
+  for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) cnt[cov[(y*SUB+sy)*SW + x*SUB+sx]]++;
   let best = 0; for (let k = 1; k < cnt.length; k++) if (cnt[k] > cnt[best]) best = k;
   return cnt[best] >= 6 ? best : 0;
 }
@@ -1587,7 +1601,7 @@ const anim = { dashes:[], foam:[], glints:[], clouds:[], weather:[] };
 let exportMode = false;                               // pokeemerald export: opaque routes, day colours, no clouds/overlays
 
 function buildStatic(){
-  const t = state.terrain, smooth = mapStyle() !== 'pixel', cover = smooth || !$('showCover').checked ? null : state.cover;
+  const t = state.terrain, smooth = mapStyle() !== 'pixel', cover = smooth || !$('showCover').checked ? null : drawCover();
   const toLand = bfsSub(i => t[i] !== T.SEA), toWater = bfsSub(i => t[i] === T.SEA);
   const at = (x, y) => inSub(x, y) ? t[y*SW+x] : -1;
   anim.dashes = []; anim.foam = []; anim.glints = [];
@@ -1699,8 +1713,6 @@ const ROUTE_LOOK = {
 };
 const routeLook = () => ROUTE_LOOK[mapStyle()] || ROUTE_LOOK.default;
 const hexRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-// trial switch for comparing ways to balance land cover against elevation (?cover=A..F in the address); blank = current
-const COVER_MIX = (() => { try { const v = (new URLSearchParams(location.search).get('cover') || '').toUpperCase(); return /^[A-F]$/.test(v) ? v : ''; } catch(e){ return ''; } })();
 function paintSmoothLand(style){
   const P = Object.fromEntries(Object.entries(STYLE_PAL[style]).map(([k, v]) => [k, Array.isArray(v) ? v.map(hexRgb) : hexRgb(v)]));
   const gen3 = style === 'gen3', hgss = style === 'hgss';
@@ -1809,20 +1821,20 @@ function paintSmoothLand(style){
     }
   }
   // land cover, smoothed like the land: each class's share is blurred twice (no speckle), and a pixel takes the class
-  // whose interpolated share is at least half. How it shares the map with elevation depends on the trial mode:
-  //  now: fill on lowland, snow everywhere · A: snow recolours the mountain bands, others as now
-  //  B: fill everywhere, then contours and shadows drawn back on top · C: 50% blend with the relief colours
-  //  D: relief untouched, fine texture marks · E: relief untouched, sparse symbols · F: snow as A, forest as B, the rest lowland only
-  if ($('showCover').checked && state.cover){
-    const mode = $('coverMode').value;
-    const CP = STYLE_PAL[style + 'Cover'].map(e => e && e.map(hexRgb)), present = new Set(state.cover);
+  // whose interpolated share is at least half. Cover shares the map with the relief by type, so neither hides the other:
+  //  forest, mangrove: fill everywhere, with the hills' contours and shadows drawn back on top
+  //  snow: keeps the mountain's own bands and contours, in white, grey and ice blue (only where the data has snow)
+  //  wetland, desert, dry grass, tundra: lowland only, so hills and mountains keep their relief
+  const COV = $('showCover').checked ? drawCover() : null;
+  if (COV){
+    const CP = STYLE_PAL[style + 'Cover'].map(e => e && e.map(hexRgb)), present = new Set(COV);
     const blur = f => { const g = new Float32Array(SW*SH);
       for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){ let s = 0, n = 0;
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){ const X = x+dx, Y = y+dy; if (inSub(X, Y)){ s += f[Y*SW+X]; n++; } }
         g[y*SW+x] = s/n; }
       return g; };
     const fields = {};
-    for (const k of present){ if (!k) continue; const f = new Float32Array(SW*SH); for (let i = 0; i < SW*SH; i++) f[i] = state.cover[i] === k ? 1 : 0; fields[k] = blur(blur(f)); }
+    for (const k of present){ if (!k) continue; const f = new Float32Array(SW*SH); for (let i = 0; i < SW*SH; i++) f[i] = COV[i] === k ? 1 : 0; fields[k] = blur(blur(f)); }
     const raw = new Uint8Array(W*H), band = new Uint8Array(W*H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
       const i = y*W + x; if (!isLand[i]) continue;
@@ -1835,66 +1847,27 @@ function paintSmoothLand(style){
     const darker = (c, f) => c.map(v => Math.round(v*f));
     const mix = (a, b, f) => a.map((v, n) => Math.round(v*(1-f) + b[n]*f));
     const SNOWB = ['#eef3fa', '#dce6f2', '#c8d6e8', '#ffffff', '#9fb2c8'].map(hexRgb);   // lowland, hill, mountain, peak, contour/shadow
-    // which pixels get a flat fill, per mode
-    const fillHere = (k, b) => mode === 'now' ? (b === 0 || k === C.SNOW)
-      : mode === 'A' ? (b === 0 && k !== C.SNOW)
-      : mode === 'B' ? true
-      : mode === 'F' ? (k === C.FOREST || k === C.MANGROVE ? true : k !== C.SNOW && b === 0)
-      : false;
+    const woods = k => k === C.FOREST || k === C.MANGROVE;
     const cls = new Uint8Array(W*H);
-    for (let i = 0; i < W*H; i++) if (raw[i] && fillHere(raw[i], band[i])) cls[i] = raw[i];
+    for (let i = 0; i < W*H; i++){ const k = raw[i]; if (k && k !== C.SNOW && (woods(k) || band[i] === 0)) cls[i] = k; }
     // flat fills with a darker rim
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
       const i = y*W + x, k = cls[i]; if (!k) continue;
       const rim = nb4.some(([dx, dy]) => { const X = x+dx, Y = y+dy; return inside(X, Y) && isLand[Y*W+X] && cls[Y*W+X] !== k; });
       put(i, CP[k][rim ? 1 : 0]);
     }
-    // B, and forest/mangrove in F: draw the relief back over the fill: contour where the ground steps up, shadow on slopes facing away from the light
-    if (mode === 'B' || mode === 'F') for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
-      const i = y*W + x, k = cls[i]; if (!k || !band[i]) continue;
-      if (mode === 'F' && k !== C.FOREST && k !== C.MANGROVE) continue;
+    // woods on hills and mountains: contour where the ground steps up, shadow on slopes facing away from the light, a glint on lit high slopes
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+      const i = y*W + x, k = cls[i]; if (!woods(k) || !band[i]) continue;
       if (stepUp(x, y)) put(i, darker(CP[k][1], .78));
       else if (litPx[i] < -.12) put(i, CP[k][1]);
       else if (band[i] >= 2 && litPx[i] > .15) put(i, mix(CP[k][0], [255, 255, 255], .25));
     }
-    // A and F: snow keeps the mountain's own bands and contours, in white, grey and ice blue
-    if (mode === 'A' || mode === 'F') for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    // snow: the mountain's bands and contours in snow colours
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
       const i = y*W + x; if (raw[i] !== C.SNOW) continue;
       const b = band[i];
       put(i, b && (stepUp(x, y) || litPx[i] < -.12) ? SNOWB[4] : SNOWB[b]);
-    }
-    // C: half-and-half blend with whatever the relief painted there
-    if (mode === 'C') for (let i = 0; i < W*H; i++){
-      const k = raw[i]; if (!k) continue;
-      const cur = [d[i*4], d[i*4+1], d[i*4+2]]; put(i, mix(cur, CP[k][0], .5));
-    }
-    // D: relief untouched, fine marks in the cover colour
-    if (mode === 'D') for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
-      const i = y*W + x, k = raw[i]; if (!k) continue;
-      const h = hash(x, y);
-      const mark = k === C.FOREST || k === C.MANGROVE ? (x % 3 === 0 && y % 3 === 0) || (x % 3 === 1 && y % 3 === 1 && h > .5)
-        : k === C.WETLAND ? y % 3 === 0 && (x + y) % 4 < 2
-        : k === C.DESERT || k === C.DRY || k === C.TUNDRA ? h > .78
-        : k === C.SNOW ? (x + y) % 3 === 0 && y % 2 === 0 : false;
-      if (mark) put(i, k === C.SNOW ? [255, 255, 255] : CP[k][k === C.FOREST || k === C.MANGROVE ? 1 : 0]);
-    }
-    // E: relief untouched, one small symbol every few pixels where the cover is solid
-    if (mode === 'E'){
-      const GLYPH = {                                   // 5×5, 1 = cover colour, 2 = dark
-        [C.FOREST]:   ['..1..', '.111.', '11111', '..2..', '..2..'],
-        [C.MANGROVE]: ['.111.', '11111', '.2.2.', '2.2.2', '.....'],
-        [C.WETLAND]:  ['.....', '1.1.1', '.1.1.', '22222', '.....'],
-        [C.DESERT]:   ['.....', '..1..', '.111.', '11111', '.....'],
-        [C.DRY]:      ['.....', '1...1', '.1.1.', '..1..', '.....'],
-        [C.SNOW]:     ['..1..', '1.1.1', '.111.', '1.1.1', '..1..'],
-        [C.TUNDRA]:   ['.....', '.....', '1.1.1', '11111', '.....'] };
-      for (let y0 = 2; y0 + 5 < H; y0 += 8) for (let x0 = 2 + ((y0 >> 3) & 1)*4; x0 + 5 < W; x0 += 8){
-        const ci = (y0 + 2)*W + x0 + 2, k = raw[ci]; if (!k || !GLYPH[k]) continue;
-        let ok = true; for (let dy = 0; dy < 5 && ok; dy++) for (let dx = 0; dx < 5; dx++) if (raw[(y0+dy)*W + x0+dx] !== k){ ok = false; break; }
-        if (!ok) continue;
-        const col = k === C.SNOW ? [255, 255, 255] : CP[k][0], dk = darker(CP[k][1], .7);
-        GLYPH[k].forEach((row, dy) => [...row].forEach((ch, dx) => { if (ch !== '.') put((y0+dy)*W + x0+dx, ch === '1' ? col : dk); }));
-      }
     }
   }
   // rivers: 1-pixel lines joining neighbouring river sub-cells
@@ -2122,8 +2095,8 @@ const ICON_COL = { mountain:{ D:'#6b6b6b', L:'#e0e0e0', G:'#a8a8a8' }, water:{ D
                    light:{ D:'#525252', Y:'#ffe060', W:'#ffffff', R:'#e04848' }, building:{ D:'#525252', R:'#d05050', W:'#e8e0d0' },
                    pine:{ D:'#245a3a', G:'#3a8a58', L:'#6cc08a', T:'#8a5a30' }, palm:{ D:'#2e7a4e', G:'#58b870', T:'#9a6a3a' } };
 function drawDecor(){
-  const hg = mapStyle() === 'hgss', iconsOnly = COVER_MIX === 'E' && mapStyle() !== 'pixel';
-  if (!hg && !iconsOnly) return;
+  const hg = mapStyle() === 'hgss';
+  if (!hg) return;
   const used = new Set(), key = (x, y) => y*MW + x;
   for (const p of routePaths()) for (const q of p.squares) used.add(key(q.x, q.y));
   for (const t of state.towns) for (const f of footprint(t)) used.add(key(f.x, f.y));
@@ -2137,12 +2110,12 @@ function drawDecor(){
     if (spot) put(spot[0], spot[1], name);
   }
   // tree clusters on forested squares near routes (land cover on), like the woods drawn on HGSS maps
-  if ($('showCover').checked && state.cover && !['D', 'E'].includes($('coverMode').value)){
-    let trees = 0; const cap = iconsOnly ? 18 : 10;
+  const dc = $('showCover').checked ? drawCover() : null;
+  if (dc){
+    let trees = 0; const cap = 10;
     for (let y = 0; y < MH && trees < cap; y++) for (let x = 0; x < MW && trees < cap; x++){
-      const cv3 = sqCover(x, y);
-      if (iconsOnly && cv3 === C.SNOW && free(x, y) && !near(x, y)){ put(x, y, 'snowpeak'); trees++; continue; }
-      if ((cv3 === C.FOREST || cv3 === C.MANGROVE) && free(x, y) && !near(x, y) && hash(x*3, y*7) > (iconsOnly ? .2 : .35)){
+      const cv3 = sqCover(x, y, dc);
+      if ((cv3 === C.FOREST || cv3 === C.MANGROVE) && free(x, y) && !near(x, y) && hash(x*3, y*7) > .35){
         const cl = state.climate ? kgOf(sqClimate(x, y)) : '';
         put(x, y, cv3 === C.MANGROVE ? 'palm' : /^(D|E|Cfc)/.test(cl) ? 'pine' : 'tree'); trees++;
       }
@@ -2194,7 +2167,7 @@ function bracket(b){
 function render(){
   if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
   const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.cover), idOf(state.coast), idOf(state.river), idOf(state.roadEdges),
-              $('showGrid').checked, $('showRivers').checked, mapStyle(), exportMode, $('showCover').checked, $('coverMode').value].join('|');
+              $('showGrid').checked, $('showRivers').checked, mapStyle(), exportMode, $('showCover').checked, state.coverVer || 0].join('|');
   if (sk !== staticKey){ buildStatic(); buildWeatherAnim(); staticKey = sk; }
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
   const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
@@ -2342,6 +2315,14 @@ function routeAt(c){
   return -1;
 }
 function paint(c){
+  if (/^cv\d$/.test(state.tool)){                   // cover brush: one sub-square, look only
+    if (!inSub(c.sx, c.sy)) return;
+    if (!state.coverPaint) state.coverPaint = new Uint8Array(SW*SH);
+    const k = +state.tool.slice(2), i = c.sy*SW + c.sx, v = k ? k : COVER_ERASE;
+    if (state.coverPaint[i] === v) return;
+    state.coverPaint[i] = v; state.coverVer = (state.coverVer || 0) + 1;
+    render(); return;
+  }
   const v = state.tool === 'land' ? T.LAND : state.tool === 'sea' ? T.SEA : T.MTN;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
     if (inSub(c.sx+dx, c.sy+dy)){
@@ -2444,7 +2425,7 @@ $('mapStyle').onchange = () => {
 };
 $('routeOpacity').oninput = () => { $('routeOpacityOut').textContent = $('routeOpacity').value + '%'; render(); scheduleSave(); };
 $('showRivers').onchange = render;
-$('showCover').onchange = $('coverMode').onchange = () => { render(); scheduleSave(); };   // look only: route names stay as they are
+$('showCover').onchange = () => { render(); scheduleSave(); };   // look only: route names stay as they are
 $('flavorNames').onchange = () => {
   if (!state.terrain) return;
   pushUndo({ flavor:!$('flavorNames').checked });  // record how it was before the click
@@ -2938,7 +2919,7 @@ const UNDO_LIMIT = 50, SAVE_KEY = 'regionMapForge.region.v1';
 let undoStack = [], redoStack = [];
 function takeSnap(over = {}){
   return {
-    terrain:state.terrain.slice(), cover:state.cover ? state.cover.slice() : null, climate:state.climate, coast:state.coast ? state.coast.slice() : null, towns:structuredClone(state.towns), routes:structuredClone(state.routes),
+    terrain:state.terrain.slice(), cover:state.cover ? state.cover.slice() : null, coverPaint:state.coverPaint ? state.coverPaint.slice() : null, climate:state.climate, coast:state.coast ? state.coast.slice() : null, towns:structuredClone(state.towns), routes:structuredClone(state.routes),
     startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant,
     regionName:state.regionName, regionNameCustom:state.regionNameCustom,
     flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
@@ -2948,7 +2929,7 @@ function takeSnap(over = {}){
 }
 function applySnap(sn){
   Object.assign(state, sn.shared);
-  Object.assign(state, { terrain:sn.terrain.slice(), cover:sn.cover ? sn.cover.slice() : null, climate:sn.climate || null, coast:sn.coast ? sn.coast.slice() : null, towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
+  Object.assign(state, { terrain:sn.terrain.slice(), cover:sn.cover ? sn.cover.slice() : null, coverPaint:sn.coverPaint ? sn.coverPaint.slice() : null, coverVer:(state.coverVer || 0) + 1, climate:sn.climate || null, coast:sn.coast ? sn.coast.slice() : null, towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
     startId:sn.startId, nextId:sn.nextId, seed:sn.seed, variant:sn.variant || 0, sel:null, linkFrom:null,
     regionName:sn.regionName || '', regionNameCustom:!!sn.regionNameCustom });
   if (!state.regionName) suggestRegionName();
@@ -2992,7 +2973,7 @@ function serialize(){
   const g = state.gen, c = g.b.corners, ll = p => ({ lat:p.lat, lng:p.lng }), n = state.names;
   return {
     format:'regionMapForge-editor/1', savedAt:new Date().toISOString(),
-    terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, climate:state.climate ? toB64(state.climate) : null, coast:state.coast ? packCoast(state.coast) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
+    terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, coverPaint:state.coverPaint ? toB64(state.coverPaint) : null, climate:state.climate ? toB64(state.climate) : null, coast:state.coast ? packCoast(state.coast) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
     riverNames:[...state.riverNames], roadSq:f32ToB64(state.roadSq), roadEdges:[...state.roadEdges], roadEdgeName:[...(state.roadEdgeName || [])],
     names:n ? { lake:[...n.lake], sea:[...n.sea], range:[...n.range], land:[...n.land].map(([k, v]) => [k, { name:v.name, kind:v.kind }]), peaks:n.peaks } : null,
     gen:{ z:g.z, o:g.o, ex:g.ex, ey:g.ey, det:g.det, b:{ ...g.b, corners:{ tl:ll(c.tl), tr:ll(c.tr), bl:ll(c.bl), br:ll(c.br) } } },
@@ -3002,13 +2983,13 @@ function serialize(){
     source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '', p.local || '', p.romanized ? 1 : 0]),
                             landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '', l.local || '', l.romanized ? 1 : 0]) } : null,
     ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value, theme:$('theme').value,
-         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked, style:mapStyle(), routeOpacity:+$('routeOpacity').value, cover:$('showCover').checked, coverMode:$('coverMode').value }
+         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked, style:mapStyle(), routeOpacity:+$('routeOpacity').value, cover:$('showCover').checked }
   };
 }
 function deserialize(o){
   const n = o.names;
   return {
-    terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, climate:o.climate ? fromB64(o.climate) : null, coast:o.coast ? unpackCoast(o.coast) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
+    terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, coverPaint:o.coverPaint ? fromB64(o.coverPaint) : null, climate:o.climate ? fromB64(o.climate) : null, coast:o.coast ? unpackCoast(o.coast) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
     regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
     flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
     shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
@@ -3061,7 +3042,6 @@ function loadRegion(o, howLabel){
   const ui = (o.editorState || o).ui;
   if (ui?.theme){ $('theme').value = ui.theme; refreshTheme(); }
   if (ui && typeof ui.cover === 'boolean') $('showCover').checked = ui.cover;
-  if (ui && ui.coverMode && [...$('coverMode').options].some(o => o.value === ui.coverMode)) $('coverMode').value = ui.coverMode;
   if (ui?.style && [...$('mapStyle').options].some(o => o.value === ui.style)) $('mapStyle').value = ui.style;
   if (ui?.routeOpacity){ $('routeOpacity').value = ui.routeOpacity; $('routeOpacityOut').textContent = ui.routeOpacity + '%'; }
   if (ui){ $('townCount').value = ui.townCount; $('townOut').textContent = ui.townCount;
