@@ -1596,19 +1596,26 @@ function buildStatic(){
       }
     } else if (cover && cover[i] && (cover[i] === C.FOREST || cover[i] === C.MANGROVE || cover[i] === C.SNOW || v === T.LAND)){
       // land cover shares the map with the relief by type (same rules as the smooth styles):
-      //  forest, mangrove: everywhere, with each height step drawn as a lit top edge and a shaded base
+      //  forest, mangrove: lowland as forest; hills as a lighter forest band; mountains stay brown rock dotted with trees
       //  snow: keeps the ground's own bands and edges, in snow colours
       //  wetland, desert, dry grass, tundra: flat land only, so hills and mountains keep their look
       const c = cover[i], h = hash(sx, sy), cv2 = (dx, dy) => inSub(sx+dx, sy+dy) ? cover[(sy+dy)*SW + sx+dx] : c;
       const upEdge = at(sx, sy-1) >= 0 && at(sx, sy-1) < v, downEdge = at(sx, sy+1) >= 0 && at(sx, sy+1) < v;
       if (c === C.FOREST || c === C.MANGROVE){
         const F = c === C.FOREST ? [PAL.forest, PAL.forestHi, PAL.forestLo] : [PAL.mangrove, PAL.mangroveHi, PAL.forestLo];
-        spx(X, Y, SP, SP, F[0]);
-        if (c === C.FOREST ? (sx + 2*sy) % 4 === 0 : (sx + sy) % 3 === 0) spx(X, Y, 1, 1, F[1]);    // tree tops / canopy
-        if (c === C.MANGROVE && v === T.LAND && sy % 3 === 2 && sx % 2 === 0) spx(X+1, Y+1, 1, 1, PAL.marshHi);   // water between the roots
-        if (v >= T.HILL && upEdge) spx(X, Y, SP, 1, F[1]);                          // sunlit top of a rise
-        if (v >= T.HILL && downEdge) spx(X, Y+SP-1, SP, 1, F[2]);                   // shaded base of a rise
-        else if (cv2(0, 1) !== c) spx(X, Y+SP-1, SP, 1, PAL.forestLo);              // shadowed edge of the woods
+        if (v >= T.MTN){                                                            // rock first, so the range keeps its shape
+          spx(X, Y, SP, SP, v === T.PEAK ? PAL.peak : PAL.mtn);
+          if (h > 0.3) spx(X + (h > .65 ? 1 : 0), Y + (sy & 1), 1, 1, F[0]);        // trees scattered over the slope
+          if (upEdge) spx(X, Y, SP, 1, v === T.PEAK ? PAL.peak : PAL.mtnHi);         // sunlit top edge
+          if (downEdge) spx(X, Y+SP-1, SP, 1, v === T.PEAK ? PAL.peakLo : PAL.mtnLo); // shadowed base
+        } else {
+          spx(X, Y, SP, SP, v === T.HILL ? F[1] : F[0]);                            // hills: a lighter forest band
+          if (c === C.FOREST ? (sx + 2*sy) % 4 === 0 : (sx + sy) % 3 === 0) spx(X, Y, 1, 1, v === T.HILL ? F[0] : F[1]);   // tree tops / canopy
+          if (c === C.MANGROVE && v === T.LAND && sy % 3 === 2 && sx % 2 === 0) spx(X+1, Y+1, 1, 1, PAL.marshHi);   // water between the roots
+          if (v === T.HILL && upEdge) spx(X, Y, SP, 1, PAL.hill);                   // sunlit top of the rise
+          if (v === T.HILL && downEdge) spx(X, Y+SP-1, SP, 1, F[2]);                // shaded base of the rise
+          else if (cv2(0, 1) !== c) spx(X, Y+SP-1, SP, 1, PAL.forestLo);            // shadowed edge of the woods
+        }
       } else if (c === C.SNOW){
         spx(X, Y, SP, SP, v === T.MTN ? PAL.snowMtn : v === T.HILL ? PAL.snowHill : PAL.snow);
         if (v >= T.HILL && upEdge) spx(X, Y, SP, 1, PAL.snow);                      // sunlit top of a rise
