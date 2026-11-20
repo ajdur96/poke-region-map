@@ -2551,7 +2551,7 @@ async function forge(opts = {}){
     const wantExtras = !app || spread(places) < count*1.5 || km.w < 60;
     if (wantExtras){
       // 8 s when the bundled data already has enough towns (extras are a bonus), 15 s when they're needed
-      const t0 = Date.now(), deadline = t0 + (!app ? 30000 : places.length >= count ? 8000 : 15000);
+      const t0 = Date.now(), deadline = t0 + (!app ? 30000 : spread(places) >= count ? 8000 : 20000);
       const stageLabel = () => `${Math.round(km.w)}×${Math.round(km.h)} km, ${tier.label} · ${(bytes/1048576).toFixed(1)} MB · ${Math.round((Date.now()-t0)/1000)} s`;
       setProgress(45, 'scout', stageLabel());
       ticker = setInterval(() => setProgress(45 + 47*Math.min(1, (Date.now()-t0)/(deadline-t0)), null, stageLabel()), 250);
