@@ -2539,7 +2539,16 @@ async function forge(opts = {}){
     // Optional extras from OpenStreetMap: villages, neighborhoods and more landmarks.
     // Only asked for when the bundled towns are thin or the frame is zoomed in, with a hard time limit.
     const count = +$('townCount').value, km = frameKm(b), tier = roadTier(b);
-    const wantExtras = !app || places.length < count*2 || km.w < 60;
+    // Count only places that can actually be spread out: a big list bunched in one valley still leaves most of a
+    // large grid empty, so ask for more whenever fewer than 1.5× the wanted towns fit the town gap.
+    const spread = list => { const kept = [];
+      for (const p of [...list].sort((a, c) => (c.pop || 0) - (a.pop || 0))){
+        const f = toSqF(p.lat, p.lon), sq = { x:Math.floor(f.x), y:Math.floor(f.y) };
+        if (!inner(sq.x, sq.y)) continue;
+        if (kept.every(k => cheb(k, sq) >= TOWN_GAP)) kept.push(sq);
+      }
+      return kept.length; };
+    const wantExtras = !app || spread(places) < count*1.5 || km.w < 60;
     if (wantExtras){
       // 8 s when the bundled data already has enough towns (extras are a bonus), 15 s when they're needed
       const t0 = Date.now(), deadline = t0 + (!app ? 30000 : places.length >= count ? 8000 : 15000);
@@ -2555,7 +2564,7 @@ async function forge(opts = {}){
       // Once Wikidata has answered, OpenStreetMap gets only a little longer: 2 s if Wikidata already found
       // plenty of places, 4 s otherwise (a working Overpass answers a small area in a second or two)
       const wdEnough = wd.done.then(() => wd.status !== 'fulfilled' || !app ? new Promise(() => {})
-        : sleep(places.length + wd.value.places.length >= count*2 ? 2000 : 4000));
+        : sleep(spread(places.concat(wd.value.places)) >= count*1.5 ? 2000 : 4000));
       await Promise.race([Promise.all([wd.done, ...osmTasks.map(o => o.done)]), wdEnough]);
       clearInterval(ticker); ticker = null;
       const [pR, lR, wR] = osmTasks;
