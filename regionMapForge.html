@@ -113,9 +113,10 @@
       <select id="gridSize">
         <option value="emerald">Emerald · 28×15</option>
         <option value="sinnoh">Sinnoh (Platinum) · 28×23</option>
+        <option value="johto">HGSS (Johto only) · 26×17</option>
         <option value="hgss">HGSS (Johto + Kanto) · 45×17</option>
       </select></div>
-    <div class="row">Towns <input type="range" id="townCount" min="3" max="16" value="10"><output id="townOut">10</output></div>
+    <div class="row">Towns <input type="range" id="townCount" min="3" max="24" value="10"><output id="townOut">10</output></div>
     <div class="row">Extra routes <input type="range" id="extraCount" min="0" max="6" value="2"><output id="extraOut">2</output></div>
     <div class="row"><label><input type="checkbox" id="landmarks" checked> Blue landmarks along routes</label></div>
     <button class="primary" id="forgeBtn">FORGE REGION ▶</button>
@@ -208,11 +209,13 @@
 // terrain sub-cells (2 px each) so coastlines and mountains still look smooth.
 // Grid sizes (squares across × down), read from the decomps: Emerald's region map (pokeemerald region_map.c,
 // MAP_WIDTH/MAP_HEIGHT), Platinum's Town Map (pokeplatinum town_map cursor limits: columns 1–28, rows 6–28) and the
-// HeartGold/SoulSilver PokéGear map (pokeheartgold pokegear_map.c scroll limits: columns 1–45, rows 1–17, Johto + Kanto).
+// HeartGold/SoulSilver PokéGear map (pokeheartgold pokegear_map.c scroll limits: rows 1–17; columns 1–26 for Johto only,
+// 1–45 once Kanto opens).
 // Every grid keeps Emerald's 8×8-pixel squares for now.
 const GRIDS = {
   emerald:{ w:28, h:15, name:'Emerald' },
   sinnoh:{ w:28, h:23, name:'Sinnoh (Platinum)' },
+  johto:{ w:26, h:17, name:'HGSS (Johto only)' },
   hgss:{ w:45, h:17, name:'HGSS (Johto + Kanto)' }
 };
 const TILE = 8, SUB = 4, SP = TILE/SUB;
