@@ -2294,14 +2294,21 @@ function routeAt(c){
   for (let i = paths.length-1; i >= 0; i--) if (paths[i].squares.some(s => s.x === c.x && s.y === c.y)) return i;
   return -1;
 }
+let lastBrush = null;                                // previous point of the current cover-brush stroke
 function paint(c){
   if (/^cv\d$/.test(state.tool)){                   // cover brush: one sub-square, look only
     if (!inSub(c.sx, c.sy)) return;
     if (!state.coverPaint) state.coverPaint = new Uint8Array(SW*SH);
-    const k = +state.tool.slice(2), i = c.sy*SW + c.sx, v = k ? k : COVER_ERASE;
-    if (state.coverPaint[i] === v) return;
-    state.coverPaint[i] = v; state.coverVer = (state.coverVer || 0) + 1;
-    render(); return;
+    const k = +state.tool.slice(2), v = k ? k : COVER_ERASE, a = lastBrush || { sx:c.sx, sy:c.sy };
+    // join to the last point, so a quick drag leaves a solid stroke rather than dots
+    const n = Math.max(Math.abs(c.sx - a.sx), Math.abs(c.sy - a.sy)); let changed = false;
+    for (let s = 0; s <= n; s++){
+      const x = Math.round(a.sx + (c.sx - a.sx)*(n ? s/n : 0)), y = Math.round(a.sy + (c.sy - a.sy)*(n ? s/n : 0)), i = y*SW + x;
+      if (inSub(x, y) && state.coverPaint[i] !== v){ state.coverPaint[i] = v; changed = true; }
+    }
+    lastBrush = { sx:c.sx, sy:c.sy };
+    if (changed){ state.coverVer = (state.coverVer || 0) + 1; render(); }
+    return;
   }
   const v = state.tool === 'land' ? T.LAND : state.tool === 'sea' ? T.SEA : T.MTN;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
@@ -2371,7 +2378,7 @@ cv.addEventListener('pointerdown', e => {
       state.linkFrom = null; state.sel = { type:'town', id:t.id };
       break;
     default:
-      pushUndo(); painting = true; paint(c); return;
+      pushUndo(); painting = true; lastBrush = null; paint(c); return;
   }
   renumber(); render(); showInfo();
 });
