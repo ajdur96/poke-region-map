@@ -84,7 +84,7 @@
 <main>
   <header>
     <h1 class="pixel">REGION MAP FORGE</h1>
-    <p>Frame a real place → forge a Gen 3-style Town Map on Emerald's 28×15 grid.</p>
+    <p>Frame a real place → forge a Gen 3-style Town Map on <span id="gridIntro">Emerald's 28×15 grid</span>.</p>
   </header>
 
   <section class="card">
@@ -93,7 +93,7 @@
       <input type="text" id="searchBox" placeholder="Search a place (e.g. Salt Lake City)">
       <button id="searchBtn">GO</button>
     </div>
-    <div id="mapWrap"><div id="map"></div><div id="frame"><span class="pixel">28×15</span></div></div>
+    <div id="mapWrap"><div id="map"></div><div id="frame"><span class="pixel" id="frameLabel">28×15</span></div></div>
     <div class="row">Rotate
       <button id="rotL" title="Rotate frame 15° counter-clockwise">⟲ 15°</button>
       <output id="rotOut" class="pixel" style="width:44px;text-align:center">0°</output>
@@ -109,6 +109,12 @@
       <label><input type="checkbox" id="overlayOn"> Show town map on the real map</label>
       <input type="range" id="overlayOpacity" min="10" max="100" value="60" title="Overlay opacity" style="max-width:140px">
     </div>
+    <div class="row" title="The grid the next forge uses. Squares stay Emerald-sized (8×8 pixels).">Grid
+      <select id="gridSize">
+        <option value="emerald">Emerald · 28×15</option>
+        <option value="sinnoh">Sinnoh (Platinum) · 28×23</option>
+        <option value="hgss">HGSS (Johto + Kanto) · 45×17</option>
+      </select></div>
     <div class="row">Towns <input type="range" id="townCount" min="3" max="16" value="10"><output id="townOut">10</output></div>
     <div class="row">Extra routes <input type="range" id="extraCount" min="0" max="6" value="2"><output id="extraOut">2</output></div>
     <div class="row"><label><input type="checkbox" id="landmarks" checked> Blue landmarks along routes</label></div>
@@ -127,7 +133,7 @@
       <span></span><button data-move="0,1">▼</button><span></span>
     </div>
     <div class="row">
-      <label><input type="checkbox" id="showGrid"> Emerald grid</label>
+      <label><input type="checkbox" id="showGrid"> Grid lines</label>
       <label><input type="checkbox" id="showRivers" checked> Rivers</label>
       <label><input type="checkbox" id="showClouds" checked> Clouds</label>
       <label><input type="checkbox" id="showWeather"> Weather</label>
@@ -200,7 +206,18 @@
 // ===== Grid constants =====
 // Emerald's region map is 28x15 squares of 8x8 px. Each square is split into 4x4
 // terrain sub-cells (2 px each) so coastlines and mountains still look smooth.
-const MW = 28, MH = 15, TILE = 8, SUB = 4, SW = MW*SUB, SH = MH*SUB, SP = TILE/SUB;
+// Grid sizes (squares across × down), read from the decomps: Emerald's region map (pokeemerald region_map.c,
+// MAP_WIDTH/MAP_HEIGHT), Platinum's Town Map (pokeplatinum town_map cursor limits: columns 1–28, rows 6–28) and the
+// HeartGold/SoulSilver PokéGear map (pokeheartgold pokegear_map.c scroll limits: columns 1–45, rows 1–17, Johto + Kanto).
+// Every grid keeps Emerald's 8×8-pixel squares for now.
+const GRIDS = {
+  emerald:{ w:28, h:15, name:'Emerald' },
+  sinnoh:{ w:28, h:23, name:'Sinnoh (Platinum)' },
+  hgss:{ w:45, h:17, name:'HGSS (Johto + Kanto)' }
+};
+const TILE = 8, SUB = 4, SP = TILE/SUB;
+let MW = 28, MH = 15, SW = MW*SUB, SH = MH*SUB;            // the forged region's grid (set by setGrid)
+let FMW = 28, FMH = 15;                                   // the frame's grid in step 1, used by the next forge
 const T = { SEA:0, LAND:1, HILL:2, MTN:3, PEAK:4 };
 // Land cover sits on top of the relief (a forested hill is still a hill for routing); it only changes the look and names
 const C = { NONE:0, FOREST:1, WETLAND:2, DESERT:3, SNOW:4, DRY:5, MANGROVE:6, TUNDRA:7 };
@@ -262,17 +279,17 @@ let rot = 0;                                              // frame rotation, deg
 function frameSizePx(){
   const wrap = document.getElementById('mapWrap'), W = wrap.clientWidth, H = wrap.clientHeight;
   const th = rot*Math.PI/180, c = Math.abs(Math.cos(th)), sn = Math.abs(Math.sin(th));
-  const k = Math.min(W*0.92/(MW*c + MH*sn), H*0.85/(MW*sn + MH*c));
-  return { fw:k*MW, fh:k*MH, W, H };
+  const k = Math.min(W*0.92/(FMW*c + FMH*sn), H*0.85/(FMW*sn + FMH*c));
+  return { fw:k*FMW, fh:k*FMH, W, H };
 }
 function placeFrame(){
   const { fw, fh, W, H } = frameSizePx();
   Object.assign(frameEl.style, { width:fw+'px', height:fh+'px', left:(W-fw)/2+'px', top:(H-fh)/2+'px', transform:`rotate(${rot}deg)` });
 }
 const mppAt = z => 40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*2**z);   // web-mercator metres per pixel
-const currentKps = () => mppAt(map.getZoom())*frameSizePx().fw/MW/1000;
+const currentKps = () => mppAt(map.getZoom())*frameSizePx().fw/FMW/1000;
 function zoomForKps(k){
-  const mpp = k*1000*MW/frameSizePx().fw;
+  const mpp = k*1000*FMW/frameSizePx().fw;
   return Math.log2(40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*mpp));
 }
 let limits = [null, null];
@@ -287,7 +304,7 @@ function updateScaleReadout(){
   if (document.activeElement !== box) box.value = k < 1 ? k.toFixed(3) : k.toFixed(2);
   const km = v => v < 10 ? v.toFixed(1) : Math.round(v);
   document.getElementById('scaleInfo').textContent =
-    `Frame ${km(k*MW)} × ${km(k*MH)} km · ≈ 1:${Math.round(k*RF_PER_KPS).toLocaleString()} · minimum 0.112 km/square`;
+    `Frame ${km(k*FMW)} × ${km(k*FMH)} km · ≈ 1:${Math.round(k*RF_PER_KPS).toLocaleString()} · minimum 0.112 km/square`;
 }
 function setKps(k){
   k = Math.max(KPS_MIN, k);
@@ -317,7 +334,7 @@ function frameBounds(){
   const lats = [tl, tr, bl, br].map(p => p.lat), lngs = [tl, tr, bl, br].map(p => p.lng);
   const k = currentKps(), mid = map.containerPointToLatLng(L.point(W/2, H/2));   // exact centre (≠ corner average in Mercator)
   return { n:Math.max(...lats), s:Math.min(...lats), e:Math.max(...lngs), w:Math.min(...lngs),
-           corners:{ tl, tr, bl, br }, center:{ lat:mid.lat, lng:mid.lng }, rot, kmPerSquare:+k.toFixed(6), wKm:k*MW, hKm:k*MH };
+           corners:{ tl, tr, bl, br }, center:{ lat:mid.lat, lng:mid.lng }, rot, kmPerSquare:+k.toFixed(6), wKm:k*FMW, hKm:k*FMH };
 }
 
 // ===== Helpers =====
@@ -1558,10 +1575,10 @@ function drawPlaceholder(){
   for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) if (hash(x, y) > 0.9) px(x*SP, y*SP+1, 3, 1, PAL.deep2);
   ctx.fillStyle = '#fff'; ctx.font = '8px "Press Start 2P", monospace'; ctx.textAlign = 'center';
   if (state.forging){
-    ctx.fillText('FORGING...', 112, 52);
+    ctx.fillText('FORGING...', cv.width/2, cv.height/2 - 8);
     px(51, 62, 122, 10, '#000'); px(53, 64, 118, 6, '#283050');
     px(53, 64, Math.round(118*prog.pct/100), 6, PAL.rFill);
-  } else { ctx.fillText('FRAME AN AREA ABOVE', 112, 56); ctx.fillText('THEN PRESS FORGE', 112, 70); }
+  } else { ctx.fillText('FRAME AN AREA ABOVE', cv.width/2, cv.height/2 - 4); ctx.fillText('THEN PRESS FORGE', cv.width/2, cv.height/2 + 10); }
 }
 
 // ===== Layered rendering =====
@@ -2229,7 +2246,7 @@ function showInfo(){
   updatePopup();
   $('toolHint').textContent = TOOL_HINTS[state.tool];
   if (state.forging){ box.innerHTML = `Forging…<small>${esc(prog.label)}</small>`; return; }
-  if (!state.terrain){ box.innerHTML = 'Welcome!<small>Pan and zoom so the dashed 28×15 frame covers your region, then press Forge.</small>'; return; }
+  if (!state.terrain){ box.innerHTML = 'Welcome!<small>Pan and zoom so the dashed ' + FMW + '×' + FMH + ' frame covers your region, then press Forge.</small>'; return; }
   const sel = state.sel;
   if (state.tool === 'link' && state.linkFrom){ box.innerHTML = `${esc(townById(state.linkFrom).name)} →<small>Now tap the town to connect to.</small>`; return; }
   if (sel && sel.type === 'town' && townById(sel.id)){
@@ -2482,6 +2499,7 @@ async function forge(opts = {}){
     const b = frameBounds();
     if (state.terrain) pushUndo();                  // forging a new region can be undone too
     clearRegion();
+    setGrid($('gridSize').value);                   // the new region takes the frame's grid
     state.forging = true; prog.pct = 0; prog.stage = ''; prog.detail = '';
     quipTimer = setInterval(() => { prog.quip++; setProgress(prog.pct); }, 2500);
     state.seed = opts.seed ?? Math.floor(Math.random()*1e6); state.nextId = 1;
@@ -2882,6 +2900,7 @@ function shareUrl(){
   const q = new URLSearchParams({ lat:ctr.lat.toFixed(6), lng:ctr.lng.toFixed(6), kps:String(+b.kmPerSquare), rot:String(b.rot || 0),
     seed:String(state.seed), layout:String(state.variant || 0), towns:$('townCount').value, extra:$('extraCount').value,
     lm:$('landmarks').checked ? '1' : '0', bendy:$('bendy').value, style:$('flavorNames').checked ? '1' : '0', theme:$('theme').value });
+  if ((state.grid || 'emerald') !== 'emerald') q.set('grid', state.grid);
   if (state.regionNameCustom) q.set('name', state.regionName);
   return location.href.split('#')[0] + '#' + q.toString();
 }
@@ -2904,6 +2923,7 @@ function openShareLink(){
   if (q.has('bendy')){ $('bendy').value = q.get('bendy'); setBendyLabel(); }
   if (q.has('style')) $('flavorNames').checked = q.get('style') === '1';
   if (q.has('theme') && [...$('theme').options].some(o => o.value === q.get('theme'))){ $('theme').value = q.get('theme'); refreshTheme(); }
+  setFrameGrid(q.get('grid') || 'emerald');
   rot = ((num('rot', 0) % 360) + 360) % 360; $('rotOut').textContent = rot + '°'; placeFrame();
   map.setView([num('lat', 0), num('lng', 0)], map.getZoom(), { animate:false });
   setKps(num('kps', 5));
@@ -2920,7 +2940,7 @@ let undoStack = [], redoStack = [];
 function takeSnap(over = {}){
   return {
     terrain:state.terrain.slice(), cover:state.cover ? state.cover.slice() : null, coverPaint:state.coverPaint ? state.coverPaint.slice() : null, climate:state.climate, coast:state.coast ? state.coast.slice() : null, towns:structuredClone(state.towns), routes:structuredClone(state.routes),
-    startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant,
+    startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant, grid:state.grid || 'emerald',
     regionName:state.regionName, regionNameCustom:state.regionNameCustom,
     flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
     shared:{ elev:state.elev, river:state.river, riverNames:state.riverNames, roadSq:state.roadSq, roadEdges:state.roadEdges,
@@ -2928,6 +2948,7 @@ function takeSnap(over = {}){
   };
 }
 function applySnap(sn){
+  setGrid(sn.grid);
   Object.assign(state, sn.shared);
   Object.assign(state, { terrain:sn.terrain.slice(), cover:sn.cover ? sn.cover.slice() : null, coverPaint:sn.coverPaint ? sn.coverPaint.slice() : null, coverVer:(state.coverVer || 0) + 1, climate:sn.climate || null, coast:sn.coast ? sn.coast.slice() : null, towns:structuredClone(sn.towns), routes:structuredClone(sn.routes),
     startId:sn.startId, nextId:sn.nextId, seed:sn.seed, variant:sn.variant || 0, sel:null, linkFrom:null,
@@ -2961,18 +2982,44 @@ function setBendyLabel(){
   $('bendyOut').textContent = v < 20 ? 'STRAIGHT' : v < 40 ? 'MOSTLY STRAIGHT' : v <= 60 ? 'BALANCED' : v <= 80 ? 'WINDING' : 'VERY BENDY';
 }
 
+// --- Grid size: the forged region's grid (setGrid) and the step-1 frame's grid (setFrameGrid) ---
+const gridKey = k => GRIDS[k] ? k : 'emerald';
+function setGrid(key){
+  key = gridKey(key); const g = GRIDS[key];
+  state.grid = key;
+  $('emeraldBtn').disabled = key !== 'emerald';         // the pokeemerald export is 28×15 only for now
+  $('emeraldBtn').title = key === 'emerald' ? 'ZIP with the region map files and a script that installs them into a pokeemerald checkout'
+    : `The pokeemerald export needs the Emerald 28×15 grid (this region is ${g.name} ${g.w}×${g.h})`;
+  if (MW === g.w && MH === g.h) return;
+  MW = g.w; MH = g.h; SW = MW*SUB; SH = MH*SUB;
+  for (const c of [cv, routeLayer, staticLayer, ovCanvas]){ c.width = MW*TILE; c.height = MH*TILE; }
+  cv.style.aspectRatio = `${MW}/${MH}`;
+  staticKey = null;                                   // force a full redraw at the new size
+}
+function setFrameGrid(key){
+  key = gridKey(key); const g = GRIDS[key];
+  $('gridSize').value = key;
+  if (FMW === g.w && FMH === g.h) return;
+  const k = currentKps();                             // keep the chosen km per square; the frame covers more or less ground
+  FMW = g.w; FMH = g.h;
+  $('frameLabel').textContent = `${g.w}×${g.h}`;
+  $('gridIntro').textContent = key === 'emerald' ? "Emerald's 28×15 grid" : `the ${g.name} ${g.w}×${g.h} grid`;
+  placeFrame(); setKps(k);
+}
+$('gridSize').onchange = () => { setFrameGrid($('gridSize').value); scheduleSave(); };
+
 // --- Full region ⇄ plain JSON (typed arrays as base64, Maps/Sets as arrays) ---
 const toB64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 const fromB64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
 // coastline values 0–2 packed four to a byte (6.7 KB instead of 27 KB)
 const packCoast = c => { const u = new Uint8Array(Math.ceil(c.length/4)); for (let i = 0; i < c.length; i++) u[i >> 2] |= c[i] << ((i & 3)*2); return toB64(u); };
-const unpackCoast = str => { const u = fromB64(str), c = new Uint8Array(SW*SP*SH*SP); for (let i = 0; i < c.length; i++) c[i] = (u[i >> 2] >> ((i & 3)*2)) & 3; return c; };
+const unpackCoast = (str, n = SW*SP*SH*SP) => { const u = fromB64(str), c = new Uint8Array(n); for (let i = 0; i < c.length; i++) c[i] = (u[i >> 2] >> ((i & 3)*2)) & 3; return c; };
 const f32ToB64 = f => toB64(new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
 const b64ToF32 = str => new Float32Array(fromB64(str).buffer);
 function serialize(){
   const g = state.gen, c = g.b.corners, ll = p => ({ lat:p.lat, lng:p.lng }), n = state.names;
   return {
-    format:'regionMapForge-editor/1', savedAt:new Date().toISOString(),
+    format:'regionMapForge-editor/1', savedAt:new Date().toISOString(), grid:state.grid || 'emerald',
     terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, coverPaint:state.coverPaint ? toB64(state.coverPaint) : null, climate:state.climate ? toB64(state.climate) : null, coast:state.coast ? packCoast(state.coast) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
     riverNames:[...state.riverNames], roadSq:f32ToB64(state.roadSq), roadEdges:[...state.roadEdges], roadEdgeName:[...(state.roadEdgeName || [])],
     names:n ? { lake:[...n.lake], sea:[...n.sea], range:[...n.range], land:[...n.land].map(([k, v]) => [k, { name:v.name, kind:v.kind }]), peaks:n.peaks } : null,
@@ -2988,12 +3035,14 @@ function serialize(){
 }
 function deserialize(o){
   const n = o.names;
+  const gk = gridKey(o.grid), G = GRIDS[gk];          // older saves are all Emerald; applySnap switches the grid
   return {
-    terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, coverPaint:o.coverPaint ? fromB64(o.coverPaint) : null, climate:o.climate ? fromB64(o.climate) : null, coast:o.coast ? unpackCoast(o.coast) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
+    grid:gk,
+    terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, coverPaint:o.coverPaint ? fromB64(o.coverPaint) : null, climate:o.climate ? fromB64(o.climate) : null, coast:o.coast ? unpackCoast(o.coast, G.w*TILE*G.h*TILE) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
     regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
     flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
     shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
-      roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(MW*MH), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []),
+      roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(G.w*G.h), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []),
       names:n ? { lake:new Map(n.lake), sea:new Map(n.sea), range:new Map(n.range), land:new Map(n.land), peaks:n.peaks } : null,
       gen:o.gen, notes:o.notes || [], timings:{},
       source:o.source ? { places:o.source.places.map(([name, lat, lon, pop, place, capital, local, rom]) => ({ name, lat, lon, pop, place, capital, local:local || undefined, romanized:!!rom })),
@@ -3004,6 +3053,7 @@ function deserialize(o){
 // Older exports (before editor state was included): rebuild what we can from the readable fields
 function fromLegacyExport(o){
   if (!o.terrainSubGrid?.rows || !o.towns) throw new Error('not a Region Map Forge export');
+  setGrid('emerald');                                 // these old exports were all 28×15
   const rows = o.terrainSubGrid.rows, terrain = new Uint8Array(SW*SH), river = new Uint8Array(SW*SH);
   const code = { '~':T.SEA, 'o':T.SEA, '.':T.LAND, 'r':T.LAND, 'h':T.HILL, '^':T.MTN, 'A':T.PEAK };
   for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){
@@ -3030,14 +3080,18 @@ function fromLegacyExport(o){
 function viewRegion(gen){
   const c = gen.b.corners; if (!c) return;
   const { lat, lng } = gen.b.center || { lat:(c.tl.lat + c.br.lat)/2, lng:(c.tl.lng + c.br.lng)/2 };
+  setFrameGrid(state.grid);                           // the frame matches the region's grid
   rot = gen.b.rot || 0; $('rotOut').textContent = rot + '°'; placeFrame();
   map.setView([lat, lng], map.getZoom(), { animate:false });
   if (gen.b.kmPerSquare) setKps(gen.b.kmPerSquare);
 }
 
 function loadRegion(o, howLabel){
-  const sn = o.format === 'regionMapForge-editor/1' ? deserialize(o) : o.editorState ? deserialize(o.editorState) : fromLegacyExport(o);
-  if (state.terrain) pushUndo();
+  const prev = state.terrain ? takeSnap() : null;   // taken first: reading an old export resets the grid
+  let sn;
+  try { sn = o.format === 'regionMapForge-editor/1' ? deserialize(o) : o.editorState ? deserialize(o.editorState) : fromLegacyExport(o); }
+  catch (e){ if (prev) setGrid(prev.grid); throw e; }
+  if (prev){ undoStack.push(prev); if (undoStack.length > UNDO_LIMIT) undoStack.shift(); redoStack = []; updateUndoButtons(); }
   applySnap(sn);
   const ui = (o.editorState || o).ui;
   if (ui?.theme){ $('theme').value = ui.theme; refreshTheme(); }
@@ -3419,6 +3473,7 @@ function zipStore(files){                              // files: [{ name, bytes 
 
 async function exportPokeemerald(){
   if (!state.terrain){ setStatus('Forge a region first.'); return; }
+  if ((state.grid || 'emerald') !== 'emerald'){ setStatus(`The pokeemerald export needs the Emerald 28×15 grid; this region uses the ${GRIDS[state.grid].name} ${MW}×${MH} grid. EXPORT PNG and EXPORT JSON work on every grid.`); return; }
   let plan;
   const allNames = [...state.towns.map(t => t.name), ...state.routes.map(r => r.name || '')];
   if (allNames.some(n => hasNonLatin(n) && !latinPart(n))) await loadRomanizer().catch(() => {});

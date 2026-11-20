@@ -29,7 +29,7 @@ def rep(old, new, count=1):
 # ---------------- page shell ----------------
 rep('<title>Region Map Forge — Gen 3 Style, Emerald Grid</title>', '<title>Region Map Forge (Mobile Demo)</title>')
 rep('<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">\n', '')
-rep('<p>Frame a real place → forge a Gen 3-style Town Map on Emerald\'s 28×15 grid.</p>',
+rep('<p>Frame a real place → forge a Gen 3-style Town Map on <span id="gridIntro">Emerald\'s 28×15 grid</span>.</p>',
     '<p>Mobile demo: fictional regions, generated in your browser. For real places, open the '
     '<a href="https://ajdur96.github.io/poke-region-map/" style="color:var(--accent)">full version</a>.</p>')
 rep('<div class="label pixel">1 · CHOOSE AN AREA</div>', '<div class="label pixel">1 · NEW REGION</div>')
@@ -275,6 +275,7 @@ function demoForge(){
   if (state.forging) return;
   if (state.terrain) pushUndo();
   clearRegion();
+  setGrid($('gridSize').value);
   state.seed = Math.floor(Math.random()*1e6); state.nextId = 1; state.variant = 0;
   const rng = seededRng(state.seed), used = new Set();
   state.gen = makeGen(demoBounds(rng), 10);
