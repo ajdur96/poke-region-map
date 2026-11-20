@@ -1646,14 +1646,14 @@ const STYLE_PAL = {
            coast:'#3c8840', foam:'#e8f8ff', shallow:'#68c8f0', river:'#58b0e8' },
   hgss:{ green:'#63c694', rim:'#52b584', tans:['#daa271', '#e8ab79', '#f7b584'], contour:'#c6946b', coast:'#52b584', river:'#51bada',
          seaRings:['#6fcde8', '#51bada', '#42b5ce', '#39a5bd'], dash:'#6fcde8' },
-  // land cover colours per style: [base, accent] for forest, wetland, desert, snow, dry grass, mangrove, tundra
-  // (indexed by C.*); accent pixels give each patch a little texture
-  sinnohCover:[null, ['#3e8c44', '#2e7034'], ['#78b8a0', '#5aa8d0'], ['#e8d498', '#f4e4b4'], ['#f4f8fc', '#c4d0e0'],
-               ['#b0cc68', '#c4d880'], ['#3a7a5a', '#2c6248'], ['#c0c4a0', '#a4a888']],
-  gen3Cover:  [null, ['#188308', '#39ac08'], ['#52b884', '#5294d5'], ['#f6d552', '#eee673'], ['#ffffff', '#cdcdcd'],
-               ['#acee31', '#cdee52'], ['#107010', '#39ac08'], ['#cdcd94', '#eee6ac']],
-  hgssCover:  [null, ['#4aa56b', '#3a8a58'], ['#6ccab0', '#51bada'], ['#f7d8a8', '#ecc890'], ['#f4f8ff', '#c8d4e0'],
-               ['#a8d080', '#b8dc90'], ['#3a9a6a', '#2e7a52'], ['#c8c8a8', '#b0b090']],
+  // land cover colours per style: [fill, rim] for forest, wetland, desert, snow, dry grass, mangrove, tundra
+  // (indexed by C.*); the rim is a darker 1-pixel edge round each patch
+  sinnohCover:[null, ['#3e8c44', '#2e6a34'], ['#78b8a0', '#5a9a86'], ['#e8d498', '#c8b478'], ['#f4f8fc', '#c4d0e0'],
+               ['#b0cc68', '#90ac50'], ['#3a7a5a', '#2a5e44'], ['#c0c4a0', '#a0a484']],
+  gen3Cover:  [null, ['#188308', '#005a00'], ['#52b884', '#318c62'], ['#f6d552', '#c5a431'], ['#ffffff', '#cdcdcd'],
+               ['#acee31', '#7bc508'], ['#107010', '#004a00'], ['#cdcd94', '#a4a473']],
+  hgssCover:  [null, ['#4aa56b', '#3a8a58'], ['#6ccab0', '#4aa890'], ['#f7d8a8', '#d8b480'], ['#f4f8ff', '#c8d4e0'],
+               ['#a8d080', '#88b060'], ['#3a9a6a', '#2e7a52'], ['#c8c8a8', '#a8a888']],
   gen3:{ bands:['#007300', '#39ac08', '#62d500', '#acee31', '#eee673'], peak:'#eee6ac', peakLo:'#cdcd94',
          coast:'#006200', foam:'#ffffff', river:'#4a9ce6',
          water:['#9cd5ff', '#94cdf8', '#8cc4f0'], stripes:['#9cd5ff', '#a4b4ff'], dash:'#b4e2ff' }
@@ -1773,19 +1773,28 @@ function paintSmoothLand(style){
         return X >= 0 && Y >= 0 && X < W && Y < H && isLand[Y*W+X] && bandOf(landPx[Y*W+X]) < h; })) put(i, P.contour);
     }
   }
-  // land cover, smoothed like the land: each pixel takes the cover class whose interpolated share is at least half.
-  // Over hills and lowland only; on mountains only snow shows (as in Pixelated)
+  // land cover, smoothed like the land: each class's share is blurred twice (no speckle), and a pixel takes the class
+  // whose interpolated share is at least half. Lowland only, so hills and mountains keep their relief; snow shows everywhere.
+  // Flat fill with a 1-pixel darker rim, like the hill contours.
   if ($('showCover').checked && state.cover){
     const CP = STYLE_PAL[style + 'Cover'].map(e => e && e.map(hexRgb)), present = new Set(state.cover);
+    const blur = f => { const g = new Float32Array(SW*SH);
+      for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){ let s = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){ const X = x+dx, Y = y+dy; if (inSub(X, Y)){ s += f[Y*SW+X]; n++; } }
+        g[y*SW+x] = s/n; }
+      return g; };
     const fields = {};
-    for (const k of present){ if (!k) continue; const f = new Float32Array(SW*SH); for (let i = 0; i < SW*SH; i++) f[i] = state.cover[i] === k ? 1 : 0; fields[k] = f; }
+    for (const k of present){ if (!k) continue; let f = new Float32Array(SW*SH); for (let i = 0; i < SW*SH; i++) f[i] = state.cover[i] === k ? 1 : 0; fields[k] = blur(blur(f)); }
+    const cls = new Uint8Array(W*H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
       const i = y*W + x; if (!isLand[i]) continue;
       let k = 0; for (const kk in fields) if (bil(fields[kk], x, y) >= .5){ k = +kk; break; }
-      if (!k || (landPx[i] >= 2.5 && k !== C.SNOW)) continue;
-      const [base, acc] = CP[k], h = hash(x, y);
-      const accent = k === C.FOREST || k === C.MANGROVE ? (x + 2*y) % 5 === 0 : k === C.WETLAND ? y % 3 === 0 && (x + (y >> 1)) % 4 === 0 : h > .9;
-      put(i, accent ? acc : base);
+      if (k && (bandOf(landPx[i]) === 0 || k === C.SNOW)) cls[i] = k;
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+      const i = y*W + x, k = cls[i]; if (!k) continue;
+      const rim = [[1,0],[-1,0],[0,1],[0,-1]].some(([dx, dy]) => { const X = x+dx, Y = y+dy; return X >= 0 && Y >= 0 && X < W && Y < H && isLand[Y*W+X] && cls[Y*W+X] !== k; });
+      put(i, CP[k][rim ? 1 : 0]);
     }
   }
   // rivers: 1-pixel lines joining neighbouring river sub-cells
