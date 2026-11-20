@@ -132,6 +132,16 @@
       <label><input type="checkbox" id="showClouds" checked> Clouds</label>
       <label><input type="checkbox" id="showWeather"> Weather</label>
       <label><input type="checkbox" id="showCover" checked> Land cover</label>
+      <label title="Trial: how land cover and elevation share the map (smooth styles)">Cover vs relief (trial)
+        <select id="coverMode">
+          <option value="now">Now: lowland fill</option>
+          <option value="A">A · snow recolours mountains</option>
+          <option value="B">B · relief drawn on top</option>
+          <option value="C">C · 50% blend</option>
+          <option value="D">D · texture only</option>
+          <option value="E">E · symbols only</option>
+          <option value="F">F · rules per type</option>
+        </select></label>
       <label>Style <select id="mapStyle" style="font-size:13px;padding:3px;border-radius:5px">
         <option value="pixel">Pixelated</option><option value="sinnoh">Sinnoh (smooth)</option><option value="gen3">Gen 3 (smooth)</option><option value="hgss">HGSS (smooth)</option></select></label>
       <label>Routes see-through <input type="range" id="routeOpacity" min="20" max="100" value="75" style="width:90px;vertical-align:middle"> <span id="routeOpacityOut">75%</span> solid</label>
@@ -1666,6 +1676,8 @@ const ROUTE_LOOK = {
 };
 const routeLook = () => ROUTE_LOOK[mapStyle()] || ROUTE_LOOK.default;
 const hexRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+// trial switch for comparing ways to balance land cover against elevation (?cover=A..F in the address); blank = current
+const COVER_MIX = (() => { try { const v = (new URLSearchParams(location.search).get('cover') || '').toUpperCase(); return /^[A-F]$/.test(v) ? v : ''; } catch(e){ return ''; } })();
 function paintSmoothLand(style){
   const P = Object.fromEntries(Object.entries(STYLE_PAL[style]).map(([k, v]) => [k, Array.isArray(v) ? v.map(hexRgb) : hexRgb(v)]));
   const gen3 = style === 'gen3', hgss = style === 'hgss';
@@ -1693,7 +1705,7 @@ function paintSmoothLand(style){
     return f[i]*(1-fx)*(1-fy) + f[i+1]*fx*(1-fy) + f[i+SW]*(1-fx)*fy + f[i+SW+1]*fx*fy;
   };
   const polar = state.climate ? (() => { let p = 0, n = 0; for (const v of state.climate) if (v){ n++; if (v >= 30) p++; } return n && p/n > .3; })() : false;
-  const img = sctx.getImageData(0, 0, W, H), d = img.data, isLand = new Uint8Array(W*H), blobs = makeBlobField(), landPx = new Float32Array(W*H), seaPx = new Uint8Array(W*H);
+  const img = sctx.getImageData(0, 0, W, H), d = img.data, isLand = new Uint8Array(W*H), blobs = makeBlobField(), landPx = new Float32Array(W*H), litPx = new Float32Array(W*H), seaPx = new Uint8Array(W*H);
   // water fields: distance to land (in sub-cells) and lake mask, interpolated like the land
   const toLand = bfsSub(i => t[i] !== T.SEA), depth = new Float32Array(SW*SH), lake = new Float32Array(SW*SH);
   for (let i = 0; i < SW*SH; i++){ depth[i] = Math.min(toLand[i], 8); lake[i] = state.lake && state.lake[i] ? 1 : 0; }
@@ -1714,7 +1726,7 @@ function paintSmoothLand(style){
     isLand[i] = 1;
     const r = bil(rel, x, y), lit = (bil(rel, x+1, y+1) - bil(rel, x-1, y-1));     // >0: slope facing the north-west light
     let c;
-    landPx[i] = r;
+    landPx[i] = r; litPx[i] = lit;
     if (gen3 || hgss) continue;               // Gen 3 bands are painted below, once the coast distance is known
     if (r >= 3.45 || (polar && r >= 2.6)) c = lit < -.12 ? P.snowLo : P.snow;
     else if (r >= 2.5) c = lit > .1 ? P.mtnHi : lit < -.1 ? P.mtnLo : P.mtn;
@@ -1774,9 +1786,12 @@ function paintSmoothLand(style){
     }
   }
   // land cover, smoothed like the land: each class's share is blurred twice (no speckle), and a pixel takes the class
-  // whose interpolated share is at least half. Lowland only, so hills and mountains keep their relief; snow shows everywhere.
-  // Flat fill with a 1-pixel darker rim, like the hill contours.
+  // whose interpolated share is at least half. How it shares the map with elevation depends on the trial mode:
+  //  now: fill on lowland, snow everywhere · A: snow recolours the mountain bands, others as now
+  //  B: fill everywhere, then contours and shadows drawn back on top · C: 50% blend with the relief colours
+  //  D: relief untouched, fine texture marks · E: relief untouched, sparse symbols · F: snow as A, forest as B, the rest lowland only
   if ($('showCover').checked && state.cover){
+    const mode = $('coverMode').value;
     const CP = STYLE_PAL[style + 'Cover'].map(e => e && e.map(hexRgb)), present = new Set(state.cover);
     const blur = f => { const g = new Float32Array(SW*SH);
       for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++){ let s = 0, n = 0;
@@ -1784,17 +1799,79 @@ function paintSmoothLand(style){
         g[y*SW+x] = s/n; }
       return g; };
     const fields = {};
-    for (const k of present){ if (!k) continue; let f = new Float32Array(SW*SH); for (let i = 0; i < SW*SH; i++) f[i] = state.cover[i] === k ? 1 : 0; fields[k] = blur(blur(f)); }
-    const cls = new Uint8Array(W*H);
+    for (const k of present){ if (!k) continue; const f = new Float32Array(SW*SH); for (let i = 0; i < SW*SH; i++) f[i] = state.cover[i] === k ? 1 : 0; fields[k] = blur(blur(f)); }
+    const raw = new Uint8Array(W*H), band = new Uint8Array(W*H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
       const i = y*W + x; if (!isLand[i]) continue;
-      let k = 0; for (const kk in fields) if (bil(fields[kk], x, y) >= .5){ k = +kk; break; }
-      if (k && (bandOf(landPx[i]) === 0 || k === C.SNOW)) cls[i] = k;
+      band[i] = bandOf(landPx[i]);
+      for (const kk in fields) if (bil(fields[kk], x, y) >= .5){ raw[i] = +kk; break; }
     }
+    const nb4 = [[1,0],[-1,0],[0,1],[0,-1]];
+    const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+    const stepUp = (x, y) => nb4.some(([dx, dy]) => { const X = x+dx, Y = y+dy, j = Y*W + X; return inside(X, Y) && isLand[j] && band[j] < band[y*W + x]; });
+    const darker = (c, f) => c.map(v => Math.round(v*f));
+    const mix = (a, b, f) => a.map((v, n) => Math.round(v*(1-f) + b[n]*f));
+    const SNOWB = ['#eef3fa', '#dce6f2', '#c8d6e8', '#ffffff', '#9fb2c8'].map(hexRgb);   // lowland, hill, mountain, peak, contour/shadow
+    // which pixels get a flat fill, per mode
+    const fillHere = (k, b) => mode === 'now' ? (b === 0 || k === C.SNOW)
+      : mode === 'A' ? (b === 0 && k !== C.SNOW)
+      : mode === 'B' ? true
+      : mode === 'F' ? (k === C.FOREST || k === C.MANGROVE ? true : k !== C.SNOW && b === 0)
+      : false;
+    const cls = new Uint8Array(W*H);
+    for (let i = 0; i < W*H; i++) if (raw[i] && fillHere(raw[i], band[i])) cls[i] = raw[i];
+    // flat fills with a darker rim
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
       const i = y*W + x, k = cls[i]; if (!k) continue;
-      const rim = [[1,0],[-1,0],[0,1],[0,-1]].some(([dx, dy]) => { const X = x+dx, Y = y+dy; return X >= 0 && Y >= 0 && X < W && Y < H && isLand[Y*W+X] && cls[Y*W+X] !== k; });
+      const rim = nb4.some(([dx, dy]) => { const X = x+dx, Y = y+dy; return inside(X, Y) && isLand[Y*W+X] && cls[Y*W+X] !== k; });
       put(i, CP[k][rim ? 1 : 0]);
+    }
+    // B, and forest/mangrove in F: draw the relief back over the fill: contour where the ground steps up, shadow on slopes facing away from the light
+    if (mode === 'B' || mode === 'F') for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+      const i = y*W + x, k = cls[i]; if (!k || !band[i]) continue;
+      if (mode === 'F' && k !== C.FOREST && k !== C.MANGROVE) continue;
+      if (stepUp(x, y)) put(i, darker(CP[k][1], .78));
+      else if (litPx[i] < -.12) put(i, CP[k][1]);
+      else if (band[i] >= 2 && litPx[i] > .15) put(i, mix(CP[k][0], [255, 255, 255], .25));
+    }
+    // A and F: snow keeps the mountain's own bands and contours, in white, grey and ice blue
+    if (mode === 'A' || mode === 'F') for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+      const i = y*W + x; if (raw[i] !== C.SNOW) continue;
+      const b = band[i];
+      put(i, b && (stepUp(x, y) || litPx[i] < -.12) ? SNOWB[4] : SNOWB[b]);
+    }
+    // C: half-and-half blend with whatever the relief painted there
+    if (mode === 'C') for (let i = 0; i < W*H; i++){
+      const k = raw[i]; if (!k) continue;
+      const cur = [d[i*4], d[i*4+1], d[i*4+2]]; put(i, mix(cur, CP[k][0], .5));
+    }
+    // D: relief untouched, fine marks in the cover colour
+    if (mode === 'D') for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+      const i = y*W + x, k = raw[i]; if (!k) continue;
+      const h = hash(x, y);
+      const mark = k === C.FOREST || k === C.MANGROVE ? (x % 3 === 0 && y % 3 === 0) || (x % 3 === 1 && y % 3 === 1 && h > .5)
+        : k === C.WETLAND ? y % 3 === 0 && (x + y) % 4 < 2
+        : k === C.DESERT || k === C.DRY || k === C.TUNDRA ? h > .78
+        : k === C.SNOW ? (x + y) % 3 === 0 && y % 2 === 0 : false;
+      if (mark) put(i, k === C.SNOW ? [255, 255, 255] : CP[k][k === C.FOREST || k === C.MANGROVE ? 1 : 0]);
+    }
+    // E: relief untouched, one small symbol every few pixels where the cover is solid
+    if (mode === 'E'){
+      const GLYPH = {                                   // 5×5, 1 = cover colour, 2 = dark
+        [C.FOREST]:   ['..1..', '.111.', '11111', '..2..', '..2..'],
+        [C.MANGROVE]: ['.111.', '11111', '.2.2.', '2.2.2', '.....'],
+        [C.WETLAND]:  ['.....', '1.1.1', '.1.1.', '22222', '.....'],
+        [C.DESERT]:   ['.....', '..1..', '.111.', '11111', '.....'],
+        [C.DRY]:      ['.....', '1...1', '.1.1.', '..1..', '.....'],
+        [C.SNOW]:     ['..1..', '1.1.1', '.111.', '1.1.1', '..1..'],
+        [C.TUNDRA]:   ['.....', '.....', '1.1.1', '11111', '.....'] };
+      for (let y0 = 2; y0 + 5 < H; y0 += 8) for (let x0 = 2 + ((y0 >> 3) & 1)*4; x0 + 5 < W; x0 += 8){
+        const ci = (y0 + 2)*W + x0 + 2, k = raw[ci]; if (!k || !GLYPH[k]) continue;
+        let ok = true; for (let dy = 0; dy < 5 && ok; dy++) for (let dx = 0; dx < 5; dx++) if (raw[(y0+dy)*W + x0+dx] !== k){ ok = false; break; }
+        if (!ok) continue;
+        const col = k === C.SNOW ? [255, 255, 255] : CP[k][0], dk = darker(CP[k][1], .7);
+        GLYPH[k].forEach((row, dy) => [...row].forEach((ch, dx) => { if (ch !== '.') put((y0+dy)*W + x0+dx, ch === '1' ? col : dk); }));
+      }
     }
   }
   // rivers: 1-pixel lines joining neighbouring river sub-cells
@@ -2022,7 +2099,8 @@ const ICON_COL = { mountain:{ D:'#6b6b6b', L:'#e0e0e0', G:'#a8a8a8' }, water:{ D
                    light:{ D:'#525252', Y:'#ffe060', W:'#ffffff', R:'#e04848' }, building:{ D:'#525252', R:'#d05050', W:'#e8e0d0' },
                    pine:{ D:'#245a3a', G:'#3a8a58', L:'#6cc08a', T:'#8a5a30' }, palm:{ D:'#2e7a4e', G:'#58b870', T:'#9a6a3a' } };
 function drawDecor(){
-  if (mapStyle() !== 'hgss') return;
+  const hg = mapStyle() === 'hgss', iconsOnly = COVER_MIX === 'E' && mapStyle() !== 'pixel';
+  if (!hg && !iconsOnly) return;
   const used = new Set(), key = (x, y) => y*MW + x;
   for (const p of routePaths()) for (const q of p.squares) used.add(key(q.x, q.y));
   for (const t of state.towns) for (const f of footprint(t)) used.add(key(f.x, f.y));
@@ -2030,24 +2108,25 @@ function drawDecor(){
   const placed = [], put = (x, y, name) => { used.add(key(x, y)); placed.push([x, y, name]); };
   const near = (x, y) => placed.some(([a, b]) => Math.abs(a - x) <= 1 && Math.abs(b - y) <= 1);
   // one icon beside each landmark, from its kind or name
-  for (const t of state.towns.filter(t => t.kind === 'landmark')){
+  if (hg) for (const t of state.towns.filter(t => t.kind === 'landmark')){
     const name = iconFor(t);
     const spot = [[1,0],[-1,0],[0,-1],[0,1],[1,-1],[-1,-1],[1,1],[-1,1]].map(([dx, dy]) => [t.x+dx, t.y+dy]).find(([x, y]) => free(x, y) && !near(x, y));
     if (spot) put(spot[0], spot[1], name);
   }
   // tree clusters on forested squares near routes (land cover on), like the woods drawn on HGSS maps
-  if ($('showCover').checked && state.cover){
-    let trees = 0;
-    for (let y = 0; y < MH && trees < 10; y++) for (let x = 0; x < MW && trees < 10; x++){
+  if ($('showCover').checked && state.cover && !['D', 'E'].includes($('coverMode').value)){
+    let trees = 0; const cap = iconsOnly ? 18 : 10;
+    for (let y = 0; y < MH && trees < cap; y++) for (let x = 0; x < MW && trees < cap; x++){
       const cv3 = sqCover(x, y);
-      if ((cv3 === C.FOREST || cv3 === C.MANGROVE) && free(x, y) && !near(x, y) && hash(x*3, y*7) > .35){
+      if (iconsOnly && cv3 === C.SNOW && free(x, y) && !near(x, y)){ put(x, y, 'snowpeak'); trees++; continue; }
+      if ((cv3 === C.FOREST || cv3 === C.MANGROVE) && free(x, y) && !near(x, y) && hash(x*3, y*7) > (iconsOnly ? .2 : .35)){
         const cl = state.climate ? kgOf(sqClimate(x, y)) : '';
         put(x, y, cv3 === C.MANGROVE ? 'palm' : /^(D|E|Cfc)/.test(cl) ? 'pine' : 'tree'); trees++;
       }
     }
   }
   // a few peaks on mountain squares that touch a route, like the ranges drawn along HGSS routes
-  let extra = 0;
+  let extra = hg ? 0 : 99;
   for (const p of routePaths()) for (const q of p.squares){
     if (extra >= 6) break;
     for (const [dx, dy] of [[0,-1],[1,0],[-1,0],[0,1]]){
@@ -2092,7 +2171,7 @@ function bracket(b){
 function render(){
   if (!state.terrain){ drawPlaceholder(); applyTheme(); return; }
   const sk = [state.ver, state.seed, idOf(state.terrain), idOf(state.cover), idOf(state.coast), idOf(state.river), idOf(state.roadEdges),
-              $('showGrid').checked, $('showRivers').checked, mapStyle(), exportMode, $('showCover').checked].join('|');
+              $('showGrid').checked, $('showRivers').checked, mapStyle(), exportMode, $('showCover').checked, $('coverMode').value].join('|');
   if (sk !== staticKey){ buildStatic(); buildWeatherAnim(); staticKey = sk; }
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
   const rk = [sk, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t,
@@ -2342,7 +2421,7 @@ $('mapStyle').onchange = () => {
 };
 $('routeOpacity').oninput = () => { $('routeOpacityOut').textContent = $('routeOpacity').value + '%'; render(); scheduleSave(); };
 $('showRivers').onchange = render;
-$('showCover').onchange = () => { render(); scheduleSave(); };   // look only: route names stay as they are
+$('showCover').onchange = $('coverMode').onchange = () => { render(); scheduleSave(); };   // look only: route names stay as they are
 $('flavorNames').onchange = () => {
   if (!state.terrain) return;
   pushUndo({ flavor:!$('flavorNames').checked });  // record how it was before the click
@@ -2900,7 +2979,7 @@ function serialize(){
     source:state.source ? { places:state.source.places.map(p => [p.name, p.lat, p.lon, p.pop || 0, p.place || '', p.capital || '', p.local || '', p.romanized ? 1 : 0]),
                             landmarks:state.source.landmarks.map(l => [l.name, l.lat, l.lon, l.score, l.natural ? 1 : 0, l.kind || '', l.local || '', l.romanized ? 1 : 0]) } : null,
     ui:{ flavor:$('flavorNames').checked, bendy:+$('bendy').value, townCount:+$('townCount').value, theme:$('theme').value,
-         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked, style:mapStyle(), routeOpacity:+$('routeOpacity').value, cover:$('showCover').checked }
+         extraCount:+$('extraCount').value, landmarks:$('landmarks').checked, style:mapStyle(), routeOpacity:+$('routeOpacity').value, cover:$('showCover').checked, coverMode:$('coverMode').value }
   };
 }
 function deserialize(o){
@@ -2959,6 +3038,7 @@ function loadRegion(o, howLabel){
   const ui = (o.editorState || o).ui;
   if (ui?.theme){ $('theme').value = ui.theme; refreshTheme(); }
   if (ui && typeof ui.cover === 'boolean') $('showCover').checked = ui.cover;
+  if (ui && ui.coverMode && [...$('coverMode').options].some(o => o.value === ui.coverMode)) $('coverMode').value = ui.coverMode;
   if (ui?.style && [...$('mapStyle').options].some(o => o.value === ui.style)) $('mapStyle').value = ui.style;
   if (ui?.routeOpacity){ $('routeOpacity').value = ui.routeOpacity; $('routeOpacityOut').textContent = ui.routeOpacity + '%'; }
   if (ui){ $('townCount').value = ui.townCount; $('townOut').textContent = ui.townCount;
