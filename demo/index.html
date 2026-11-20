@@ -1825,7 +1825,8 @@ function paintSmoothLand(style){
   //  forest, mangrove: fill everywhere, with the hills' contours and shadows drawn back on top
   //  snow: keeps the mountain's own bands and contours, in white, grey and ice blue (only where the data has snow)
   //  wetland, desert, dry grass, tundra: lowland only, so hills and mountains keep their relief
-  const COV = $('showCover').checked ? drawCover() : null;
+  // Hand-painted squares skip the smoothing (a one-square stroke would blur away) and are drawn exactly where painted.
+  const COV = $('showCover').checked && (state.cover || state.coverPaint) ? (state.cover || new Uint8Array(SW*SH)) : null, PAINT = state.coverPaint;
   if (COV){
     const CP = STYLE_PAL[style + 'Cover'].map(e => e && e.map(hexRgb)), present = new Set(COV);
     const blur = f => { const g = new Float32Array(SW*SH);
@@ -1839,6 +1840,8 @@ function paintSmoothLand(style){
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
       const i = y*W + x; if (!isLand[i]) continue;
       band[i] = bandOf(landPx[i]);
+      const pv = PAINT ? PAINT[((y/SP) | 0)*SW + ((x/SP) | 0)] : 0;
+      if (pv){ raw[i] = pv === COVER_ERASE ? 0 : pv; continue; }
       for (const kk in fields) if (bil(fields[kk], x, y) >= .5){ raw[i] = +kk; break; }
     }
     const nb4 = [[1,0],[-1,0],[0,1],[0,-1]];
