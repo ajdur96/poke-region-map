@@ -213,7 +213,7 @@ const PAL = {
   hill:'#a8d470', hillHi:'#c8e890', mtn:'#b08850', mtnHi:'#d8b070', mtnLo:'#7a5a30',
   peak:'#f0f0f0', peakLo:'#b8c0d0', river:'#68c8e8',
   forest:'#388840', forestHi:'#58a850', forestLo:'#246830', marsh:'#70b090', marshHi:'#58a0c0', marshLo:'#4c9070',
-  sand:'#e4d098', sandHi:'#f0e0b0', sandLo:'#ccb688', snow:'#e8f0f8', snowLo:'#b8c8dc', dry:'#a8c860', dry2:'#b8d070',
+  sand:'#e4d098', sandHi:'#f0e0b0', sandLo:'#ccb688', snow:'#e8f0f8', snowLo:'#b8c8dc', snowHill:'#d4e0ee', snowMtn:'#c4d2e4', snowShade:'#9cb0c8', dry:'#a8c860', dry2:'#b8d070',
   mangrove:'#2c7858', mangroveHi:'#48a070', tundra:'#b4bc9c', tundraHi:'#d0ccac', tundraLo:'#949c80',
   rain:'#a8d0f0', snowflake:'#ffffff', sandGust:'#f0dca8', fog:'rgba(235,240,245,.45)',
   rOut:'#b87020', rFill:'#f8b048', rSel:'#fff070', sOut:'#3880b0', sFill:'#b8ecf8',
@@ -1594,34 +1594,40 @@ function buildStatic(){
         if (d >= 4 && h > 0.9) anim.dashes.push([X, Y+1, phase]);             // open-sea swell dashes
         if (d === 1) anim.foam.push([X + (h > .5 ? 1 : 0), Y, phase]);         // shoreline sparkle spots
       }
-    } else if (cover && cover[i] && v !== T.PEAK && !(v === T.MTN && cover[i] !== C.SNOW)){
-      // land cover over flat land and hills; on mountains only snow shows
+    } else if (cover && cover[i] && (cover[i] === C.FOREST || cover[i] === C.MANGROVE || cover[i] === C.SNOW || v === T.LAND)){
+      // land cover shares the map with the relief by type (same rules as the smooth styles):
+      //  forest, mangrove: everywhere, with each height step drawn as a lit top edge and a shaded base
+      //  snow: keeps the ground's own bands and edges, in snow colours
+      //  wetland, desert, dry grass, tundra: flat land only, so hills and mountains keep their look
       const c = cover[i], h = hash(sx, sy), cv2 = (dx, dy) => inSub(sx+dx, sy+dy) ? cover[(sy+dy)*SW + sx+dx] : c;
-      if (c === C.FOREST){
-        spx(X, Y, SP, SP, PAL.forest);
-        if ((sx + 2*sy) % 4 === 0) spx(X, Y, 1, 1, PAL.forestHi);                  // tree-top dots
-        if (cv2(0, 1) !== C.FOREST) spx(X, Y+SP-1, SP, 1, PAL.forestLo);            // shadowed forest edge
+      const upEdge = at(sx, sy-1) >= 0 && at(sx, sy-1) < v, downEdge = at(sx, sy+1) >= 0 && at(sx, sy+1) < v;
+      if (c === C.FOREST || c === C.MANGROVE){
+        const F = c === C.FOREST ? [PAL.forest, PAL.forestHi, PAL.forestLo] : [PAL.mangrove, PAL.mangroveHi, PAL.forestLo];
+        spx(X, Y, SP, SP, F[0]);
+        if (c === C.FOREST ? (sx + 2*sy) % 4 === 0 : (sx + sy) % 3 === 0) spx(X, Y, 1, 1, F[1]);    // tree tops / canopy
+        if (c === C.MANGROVE && v === T.LAND && sy % 3 === 2 && sx % 2 === 0) spx(X+1, Y+1, 1, 1, PAL.marshHi);   // water between the roots
+        if (v >= T.HILL && upEdge) spx(X, Y, SP, 1, F[1]);                          // sunlit top of a rise
+        if (v >= T.HILL && downEdge) spx(X, Y+SP-1, SP, 1, F[2]);                   // shaded base of a rise
+        else if (cv2(0, 1) !== c) spx(X, Y+SP-1, SP, 1, PAL.forestLo);              // shadowed edge of the woods
+      } else if (c === C.SNOW){
+        spx(X, Y, SP, SP, v === T.MTN ? PAL.snowMtn : v === T.HILL ? PAL.snowHill : PAL.snow);
+        if (v >= T.HILL && upEdge) spx(X, Y, SP, 1, PAL.snow);                      // sunlit top of a rise
+        if (v >= T.HILL && downEdge) spx(X, Y+SP-1, SP, 1, PAL.snowShade);          // shaded base of a rise
+        else if (cv2(0, 1) !== C.SNOW) spx(X, Y+SP-1, SP, 1, PAL.snowLo);
+        else if (h > 0.9) spx(X, Y, 1, 1, PAL.snowLo);
       } else if (c === C.WETLAND){
         spx(X, Y, SP, SP, PAL.marsh);
         if (sy % 2 === 0 && (sx + (sy >> 1)) % 3 === 0) spx(X, Y, SP, 1, PAL.marshHi);   // pools between reeds
         else if (h > 0.8) spx(X+1, Y, 1, 1, PAL.marshLo);
       } else if (c === C.DESERT){
-        spx(X, Y, SP, SP, v === T.HILL ? PAL.sandLo : PAL.sand);
+        spx(X, Y, SP, SP, PAL.sand);
         if (h > 0.82) spx(X, Y, 1, 1, PAL.sandHi); else if (h < 0.08) spx(X+1, Y+1, 1, 1, PAL.sandLo);
-      } else if (c === C.SNOW){
-        spx(X, Y, SP, SP, PAL.snow);
-        if (v >= T.HILL && cv2(0, 1) !== C.SNOW) spx(X, Y+SP-1, SP, 1, PAL.snowLo);
-        else if (h > 0.9) spx(X, Y, 1, 1, PAL.snowLo);
-      } else if (c === C.MANGROVE){
-        spx(X, Y, SP, SP, PAL.mangrove);
-        if ((sx + sy) % 3 === 0) spx(X, Y, 1, 1, PAL.mangroveHi);                 // canopy
-        if (sy % 3 === 2 && sx % 2 === 0) spx(X+1, Y+1, 1, 1, PAL.marshHi);          // water between the roots
       } else if (c === C.TUNDRA){
-        spx(X, Y, SP, SP, v === T.HILL ? PAL.tundraLo : PAL.tundra);
+        spx(X, Y, SP, SP, PAL.tundra);
         if (h > 0.84) spx(X, Y, 1, 1, PAL.tundraHi); else if (h < 0.1) spx(X+1, Y+1, 1, 1, PAL.tundraLo);   // lichen and stones
       } else {                                                                     // dry grassland: a yellower green
         const blob = hash(sx >> 3, sy >> 3) > 0.55;
-        spx(X, Y, SP, SP, v === T.HILL ? PAL.hill : blob ? PAL.dry2 : PAL.dry);
+        spx(X, Y, SP, SP, blob ? PAL.dry2 : PAL.dry);
       }
     } else if (v === T.LAND){
       const blob = hash(sx >> 3, sy >> 3) > 0.55;
