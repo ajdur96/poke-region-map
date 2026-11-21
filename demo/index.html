@@ -772,7 +772,7 @@ function derive(){
     state.sq[y*MW+x] = water >= n/2 ? 'water' : mtn >= n/2 ? 'mountain' : hill + mtn >= n/2 ? 'hill' : 'land';
     state.sqElev[y*MW+x] = e/n;
   }
-  state.ver++; pathCache.clear();
+  state.ver++; clearPaths();
 }
 
 // ===== Overpass (OpenStreetMap) queries: towns + roads =====
@@ -1139,7 +1139,7 @@ function ingestRoads(ways){
       }
     }
   }
-  state.roadSq = roadSq; state.roadEdges = edges; state.roadEdgeName = edgeName; pathCache.clear();
+  state.roadSq = roadSq; state.roadEdges = edges; state.roadEdgeName = edgeName; clearPaths();
 }
 
 // ===== Town picking =====
@@ -1308,11 +1308,21 @@ class MinHeap {
 // How each route is drawn: A* over the 28x15 grid. Real road steps are cheap, mountains are
 // expensive, water is allowed (sea routes), and turning costs extra so paths stay straight like the Gen 3 maps.
 const pathCache = new Map();
-function findPath(a, b){
+const clearPaths = () => { pathCache.clear(); routePathsKey = ''; };
+// `taken` holds squares earlier routes already use: stepping onto one is a little cheaper (routes join and branch
+// like real roads), and running right alongside one costs extra, so two routes don't shadow each other a square
+// apart. Squares next to either end town are exempt, since routes have to meet there.
+function findPath(a, b, taken = null){
   const townKey = state.towns.map(t => t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
   const st = routeStyle();
-  const key = `${a.x},${a.y}>${b.x},${b.y}|${state.ver}|${townKey}|${st.t}`;
+  const takenKey = taken ? [...taken].sort((p, q) => p - q).join('.') : '';
+  const key = `${a.x},${a.y}>${b.x},${b.y}|${state.ver}|${townKey}|${st.t}|${takenKey}`;
   if (pathCache.has(key)) return pathCache.get(key);
+  const ends = [...footprint(a), ...footprint(b)];
+  const nearEnd = (x, y) => ends.some(f => Math.max(Math.abs(f.x - x), Math.abs(f.y - y)) <= 1);
+  const beside = new Set();
+  if (taken) for (const k of taken){ const x = k % MW, y = (k/MW) | 0;
+    for (let d = 0; d < 4; d++){ const nx = x+DX[d], ny = y+DY[d], nk = ny*MW + nx; if (inSq(nx, ny) && !taken.has(nk)) beside.add(nk); } }
 
   const occupied = new Set(state.towns.filter(t => t.kind !== 'landmark' && t !== a && t !== b).flatMap(t => footprint(t).map(f => f.y*MW + f.x)));
   const N = MW*MH*5, g = new Float32Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1), closed = new Uint8Array(N);
@@ -1332,6 +1342,7 @@ function findPath(a, b){
       if (st.wander) c += st.wander*wanderAt(nx, ny);
       if (state.roadEdges.has(edgeKey(sq, nsq))) c *= st.road;
       if (occupied.has(nsq)) c += 6;
+      if (taken && !nearEnd(nx, ny)){ if (taken.has(nsq)) c *= 0.8; else if (beside.has(nsq)) c += 3; }
       if (d !== 4 && d !== nd) c += st.turn;
       const ns = nsq*5 + nd, ng = g[s] + c;
       if (ng < g[ns]){ g[ns] = ng; prev[ns] = s; heap.push(ns, ng + st.road*(Math.abs(nx-b.x) + Math.abs(ny-b.y))); }
@@ -1349,7 +1360,23 @@ function findPath(a, b){
   pathCache.set(key, res);
   return res;
 }
-const routePaths = () => state.routes.map(r => findPath(townById(r.a), townById(r.b)));
+// Routes are pathed one after another, shortest first (independent of numbering order), each knowing the squares
+// the earlier ones took. Memoised per layout, since many parts of the app ask for the paths every frame.
+let routePathsKey = '', routePathsVal = [];
+function routePaths(){
+  const townKey = state.towns.map(t => t.id + ':' + t.x + ':' + t.y + t.kind[0] + (t.size || 1) + (t.dir || '')).join(',');
+  const k = [state.ver, townKey, state.routes.map(r => r.a + '-' + r.b).join(','), routeStyle().t].join('|');
+  if (k === routePathsKey) return routePathsVal;
+  const order = state.routes.map((r, i) => ({ i, a:townById(r.a), b:townById(r.b) })).filter(o => o.a && o.b)
+    .sort((p, q) => dist(p.a, p.b) - dist(q.a, q.b) || p.i - q.i);
+  const taken = new Set(), out = new Array(state.routes.length);
+  for (const o of order){
+    const p = findPath(o.a, o.b, taken.size ? new Set(taken) : null); out[o.i] = p;
+    for (const q of p.squares) taken.add(q.y*MW + q.x);
+  }
+  routePathsKey = k; routePathsVal = out;
+  return out;
+}
 function corners(sqs){
   if (sqs.length < 3) return sqs;
   const out = [sqs[0]];
@@ -2297,7 +2324,7 @@ function showInfo(){
     return;
   }
   if (sel && sel.type === 'route' && state.routes[sel.idx]){
-    const r = state.routes[sel.idx], p = findPath(townById(r.a), townById(r.b));
+    const r = state.routes[sel.idx], p = routePaths()[sel.idx];
     const pr = routeProfile(p.squares);
     box.innerHTML = `${esc(r.name || 'Route')}<small>${esc(townById(r.a).name)} ↔ ${esc(townById(r.b).name)} · ${fmtKm(pr.km)} (${p.squares.length} squares)<br>Follows real roads: ${Math.round(p.roadFrac*100)}%${p.waterFrac > 0.5 ? ' · Sea route (Surf)' : ''}${r.custom ? ' · your name' : ''}</small>${profileSvg(pr)}`;
     actionBtn('RENAME', async () => { const v = await askText('Name this route:', r.name); if (v && v.trim()){ r.name = v.trim(); r.custom = true; } });
@@ -2515,7 +2542,7 @@ function clearRegion(){
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
     roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{}, source:null, variant:0,
     regionName:'', regionNameCustom:false });
-  pathCache.clear(); $('popup').style.display = 'none';
+  clearPaths(); $('popup').style.display = 'none';
 }
 
 async function forge(opts = {}){
@@ -2631,7 +2658,7 @@ $('bendy').oninput = () => {
   const v = +$('bendy').value;
   if (state.terrain && !bendyArmed){ pushUndo({ bendy:bendyBefore }); bendyArmed = true; }
   setBendyLabel();
-  if (state.terrain && !state.forging){ pathCache.clear(); renumber(); render(); showInfo(); }
+  if (state.terrain && !state.forging){ clearPaths(); renumber(); render(); showInfo(); }
 };
 // Routes you renamed keep their name if the same two towns are still connected afterwards
 const pairKey = (a, b) => a < b ? a + '-' + b : b + '-' + a;
