@@ -246,9 +246,14 @@ let MW = 28, MH = 15, SW = MW*SUB, SH = MH*SUB;            // the forged region'
 let FMW = 28, FMH = 15;                                   // the frame's grid in step 1, used by the next forge
 const T = { SEA:0, LAND:1, HILL:2, MTN:3, PEAK:4 };
 // Land cover sits on top of the relief (a forested hill is still a hill for routing); it only changes the look and names
-const C = { NONE:0, FOREST:1, WETLAND:2, DESERT:3, SNOW:4, DRY:5, MANGROVE:6, TUNDRA:7 };
-const COVER_NAMES = ['', 'forest', 'wetland', 'desert', 'snow', 'dry grassland', 'mangroves', 'tundra'];
-const COVER_KEYS = [null, 'forest', 'wetland', 'desert', 'snow', 'dry', 'mangrove', 'tundra'];
+const C = { NONE:0, FOREST:1, WETLAND:2, DESERT:3, SNOW:4, DRY:5, MANGROVE:6, TUNDRA:7, CROP:8, URBAN:9 };
+const COVER_NAMES = ['', 'forest', 'wetland', 'desert', 'snow', 'dry grassland', 'mangroves', 'tundra', 'farmland', 'built-up'];
+const COVER_KEYS = [null, 'forest', 'wetland', 'desert', 'snow', 'dry', 'mangrove', 'tundra', 'crop', 'urban'];
+// Trial switches in the address bar (not in the menus): ?trial=crops shows WorldCover cropland and built-up areas;
+// ?cut=0.3 changes the share a land cover class needs before the smooth styles draw it (default 0.5).
+const TRIAL = (() => { try { const q = new URLSearchParams(location.search);
+  return { crops:/crops/.test(q.get('trial') || ''), cut:Math.min(0.9, Math.max(0.1, parseFloat(q.get('cut')) || 0.5)) }; }
+  catch(e){ return { crops:false, cut:0.5 }; } })();
 const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1];
 const PAL = {
   deep:'#3098c0', deep2:'#48b0d8', mid:'#50b8e0', shallow:'#90dcf0', foam:'#d0f4f8',
@@ -256,7 +261,7 @@ const PAL = {
   hill:'#a8d470', hillHi:'#c8e890', mtn:'#b08850', mtnHi:'#d8b070', mtnLo:'#7a5a30',
   peak:'#f0f0f0', peakLo:'#b8c0d0', river:'#68c8e8',
   forest:'#388840', forestHi:'#58a850', forestLo:'#246830', marsh:'#70b090', marshHi:'#58a0c0', marshLo:'#4c9070',
-  sand:'#e4d098', sandHi:'#f0e0b0', sandLo:'#ccb688', snow:'#e8f0f8', snowLo:'#b8c8dc', snowHill:'#d4e0ee', snowMtn:'#c4d2e4', snowShade:'#9cb0c8', dry:'#a8c860', dry2:'#b8d070',
+  sand:'#e4d098', sandHi:'#f0e0b0', sandLo:'#ccb688', cropA:'#d8d060', cropB:'#b8cc58', cropC:'#e8d888', cropLine:'#98a848', urban:'#a8a4ac', urbanSt:'#d0ccd0', urbanLo:'#888090', snow:'#e8f0f8', snowLo:'#b8c8dc', snowHill:'#d4e0ee', snowMtn:'#c4d2e4', snowShade:'#9cb0c8', dry:'#a8c860', dry2:'#b8d070',
   mangrove:'#2c7858', mangroveHi:'#48a070', tundra:'#b4bc9c', tundraHi:'#d0ccac', tundraLo:'#949c80',
   rain:'#a8d0f0', snowflake:'#ffffff', sandGust:'#f0dca8', fog:'rgba(235,240,245,.45)',
   rOut:'#b87020', rFill:'#f8b048', rSel:'#fff070', sOut:'#3880b0', sFill:'#b8ecf8',
@@ -608,7 +613,9 @@ function coverFrom(wc, kg, terr, elev){
     case 95: return C.MANGROVE;
     case 100: return C.TUNDRA;
     case 0: break;                                                     // no land cover data: fall back on climate alone
-    default: return polar ? C.TUNDRA : 0;                              // crops, built-up, water
+    case 40: return TRIAL.crops ? C.CROP : polar ? C.TUNDRA : 0;      // cropland (trial only)
+    case 50: return TRIAL.crops ? C.URBAN : polar ? C.TUNDRA : 0;     // built-up (trial only)
+    default: return polar ? C.TUNDRA : 0;                              // permanent water and anything unmatched
   }
   if (!kg) return 0;
   return isDesertClimate(kg) ? C.DESERT : arid ? C.DRY : polar ? C.TUNDRA : kg <= 2 ? C.FOREST : 0;
@@ -1722,6 +1729,13 @@ function buildStatic(){
       } else if (c === C.TUNDRA){
         spx(X, Y, SP, SP, PAL.tundra);
         if (h > 0.84) spx(X, Y, 1, 1, PAL.tundraHi); else if (h < 0.1) spx(X+1, Y+1, 1, 1, PAL.tundraLo);   // lichen and stones
+      } else if (c === C.CROP){                                                    // farmland: patchwork of fields
+        const f = hash(sx >> 2, sy >> 2);
+        spx(X, Y, SP, SP, f > 0.66 ? PAL.cropA : f > 0.33 ? PAL.cropB : PAL.cropC);
+        if (sx % 4 === 0 || sy % 4 === 0) spx(X, Y, sx % 4 === 0 ? 1 : SP, sy % 4 === 0 ? 1 : SP, PAL.cropLine);   // field edges
+      } else if (c === C.URBAN){                                                   // built-up: grey blocks, lighter streets
+        spx(X, Y, SP, SP, PAL.urban);
+        if (sx % 3 === 0 || sy % 3 === 0) spx(X, Y, SP, SP, PAL.urbanSt); else if (h > 0.7) spx(X, Y, 1, 1, PAL.urbanLo);
       } else {                                                                     // dry grassland: a yellower green
         const blob = hash(sx >> 3, sy >> 3) > 0.55;
         spx(X, Y, SP, SP, blob ? PAL.dry2 : PAL.dry);
@@ -1776,11 +1790,11 @@ const STYLE_PAL = {
   // land cover colours per style: [fill, rim] for forest, wetland, desert, snow, dry grass, mangrove, tundra
   // (indexed by C.*); the rim is a darker 1-pixel edge round each patch
   sinnohCover:[null, ['#3e8c44', '#2e6a34'], ['#78b8a0', '#5a9a86'], ['#e8d498', '#c8b478'], ['#f4f8fc', '#c4d0e0'],
-               ['#b0cc68', '#90ac50'], ['#3a7a5a', '#2a5e44'], ['#c0c4a0', '#a0a484']],
+               ['#b0cc68', '#90ac50'], ['#3a7a5a', '#2a5e44'], ['#c0c4a0', '#a0a484'], ['#d8d070', '#b0a850'], ['#c8c4c8', '#9890a0']],
   gen3Cover:  [null, ['#188308', '#005a00'], ['#52b884', '#318c62'], ['#f6d552', '#c5a431'], ['#ffffff', '#cdcdcd'],
-               ['#acee31', '#7bc508'], ['#107010', '#004a00'], ['#cdcd94', '#a4a473']],
+               ['#acee31', '#7bc508'], ['#107010', '#004a00'], ['#cdcd94', '#a4a473'], ['#e6de62', '#c5b431'], ['#cdc5cd', '#9c949c']],
   hgssCover:  [null, ['#4aa56b', '#3a8a58'], ['#6ccab0', '#4aa890'], ['#f7d8a8', '#d8b480'], ['#f4f8ff', '#c8d4e0'],
-               ['#a8d080', '#88b060'], ['#3a9a6a', '#2e7a52'], ['#c8c8a8', '#a8a888']],
+               ['#a8d080', '#88b060'], ['#3a9a6a', '#2e7a52'], ['#c8c8a8', '#a8a888'], ['#e0d890', '#c0b870'], ['#d0ccd4', '#a8a0b0']],
   gen3:{ bands:['#007300', '#39ac08', '#62d500', '#acee31', '#eee673'], peak:'#eee6ac', peakLo:'#cdcd94',
          coast:'#006200', foam:'#ffffff', river:'#4a9ce6',
          water:['#9cd5ff', '#94cdf8', '#8cc4f0'], stripes:['#9cd5ff', '#a4b4ff'], dash:'#b4e2ff' }
@@ -1922,7 +1936,7 @@ function paintSmoothLand(style){
       band[i] = bandOf(landPx[i]);
       const pv = PAINT ? PAINT[((y/SP) | 0)*SW + ((x/SP) | 0)] : 0;
       if (pv){ raw[i] = pv === COVER_ERASE ? 0 : pv; continue; }
-      for (const kk in fields) if (bil(fields[kk], x, y) >= .5){ raw[i] = +kk; break; }
+      let bestV = TRIAL.cut - 1e-9; for (const kk in fields){ const v = bil(fields[kk], x, y); if (v >= bestV){ bestV = v; raw[i] = +kk; } }
     }
     const nb4 = [[1,0],[-1,0],[0,1],[0,-1]];
     const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
