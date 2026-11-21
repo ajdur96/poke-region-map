@@ -314,13 +314,29 @@ function placeFrame(){
 }
 const mppAt = z => 40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*2**z);   // web-mercator metres per pixel
 const currentKps = () => mppAt(map.getZoom())*frameSizePx().fw/FMW/1000;
+// When the map panel briefly measures 0 px (phone rotation, returning to a backgrounded tab) the maths below would
+// divide by zero and push Leaflet to an infinite zoom, which turns every coordinate into NaN. So every step guards:
+// no frame size → keep the current zoom.
 function zoomForKps(k){
-  const mpp = k*1000*FMW/frameSizePx().fw;
-  return Math.log2(40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*mpp));
+  const fw = frameSizePx().fw, z0 = map.getZoom();
+  if (!(fw > 0) || !(k > 0)) return z0;
+  const z = Math.log2(40075016.686*Math.cos(map.getCenter().lat*Math.PI/180)/(256*(k*1000*FMW/fw)));
+  return Number.isFinite(z) ? z : z0;
+}
+let lastGoodView = null;                                  // last valid centre + zoom, to recover a broken view
+const viewOk = () => { const c = map.getCenter(), z = map.getZoom();
+  return Number.isFinite(c.lat) && Number.isFinite(c.lng) && Math.abs(c.lat) < 85.06 && Number.isFinite(z); };
+function recoverView(){
+  if (viewOk()) return true;
+  const v = lastGoodView || { lat:40.6, lng:-111.8, z:8 };
+  map.setMinZoom(0); map.setMaxZoom(17); limits = [null, null];
+  map.setView([v.lat, v.lng], v.z, { animate:false });
+  return viewOk();
 }
 let limits = [null, null];
 function updateZoomLimits(){                              // hard stop at 1:50,000 (zoomed in); zoom out freely
   const lo = 0, hi = Math.min(17, zoomForKps(KPS_MIN));
+  if (!Number.isFinite(hi) || hi < lo || !(frameSizePx().fw > 0)) return;
   if (limits[0] === null || Math.abs(lo - limits[0]) > 0.01 || Math.abs(hi - limits[1]) > 0.01){
     limits = [lo, hi]; map.setMinZoom(lo); map.setMaxZoom(hi);
   }
@@ -333,6 +349,7 @@ function updateScaleReadout(){
     `Frame ${km(k*FMW)} × ${km(k*FMH)} km · ≈ 1:${Math.round(k*RF_PER_KPS).toLocaleString()} · minimum 0.112 km/square`;
 }
 function setKps(k){
+  if (!Number.isFinite(k) || !(frameSizePx().fw > 0)) return;
   k = Math.max(KPS_MIN, k);
   updateZoomLimits(); map.setZoom(zoomForKps(k), { animate:false }); updateScaleReadout();
 }
@@ -342,7 +359,9 @@ function setRot(r){
   placeFrame(); setKps(k);
   document.getElementById('rotOut').textContent = rot + '°';
 }
-map.on('zoomend moveend', () => { updateZoomLimits(); updateScaleReadout(); });
+map.on('zoomend moveend', () => {
+  if (viewOk()){ const c = map.getCenter(); lastGoodView = { lat:c.lat, lng:c.lng, z:map.getZoom() }; }
+  updateZoomLimits(); updateScaleReadout(); });
 window.addEventListener('resize', () => { placeFrame(); map.invalidateSize(); updateZoomLimits(); updateScaleReadout(); });
 placeFrame();
 document.getElementById('rotL').onclick = () => setRot(rot - 15);
@@ -1228,7 +1247,8 @@ function pickTowns(places, count, wantLandmarks, landmarks = [], opts = {}){
   const nAfter = towns.filter(t => t.namedAfter && fresh.indexOf(t) < 0).length;
   if (nAfter) state.notes.push(`${nAfter} town${nAfter > 1 ? 's are' : ' is'} named after nearby real features (hills, dams, parks), since too few towns were found.`);
   // No made-up placeholders: if real names run out, the region simply has fewer towns
-  if (nTowns() < count) state.notes.push(`Only ${nTowns()} real place${nTowns() === 1 ? "" : "s"} fit${nTowns() === 1 ? "s" : ""} this area, so the map has ${nTowns()} town${nTowns() === 1 ? '' : 's'} instead of ${count}. A bigger frame finds more.`);
+  if (!places.length && !landmarks.length) state.notes.push('No place data loaded for this frame (bundled data, Wikidata and OpenStreetMap all came back empty), so the map has no towns. Try FORGE again; if it keeps happening, tell me the place and grid.');
+  else if (nTowns() < count) state.notes.push(`Only ${nTowns()} real place${nTowns() === 1 ? "" : "s"} fit${nTowns() === 1 ? "s" : ""} this area, so the map has ${nTowns()} town${nTowns() === 1 ? '' : 's'} instead of ${count}. A bigger frame finds more.`);
   if (wantLandmarks){
     const nLm = Math.max(lockedL.length, Math.round(count/2));
     const isLm = () => towns.filter(t => t.kind === 'landmark').length;
@@ -2549,7 +2569,10 @@ async function forge(opts = {}){
   const btn = $('forgeBtn'); btn.disabled = true;
   let ticker = null, quipTimer = null;
   try {
+    recoverView(); placeFrame();
     const b = frameBounds();
+    const okB = [b.n, b.s, b.e, b.w].every(Number.isFinite) && b.n > b.s && b.e > b.w && b.n < 85.06 && b.s > -85.06;
+    if (!okB){ setStatus('The real map lost its place (this can happen after rotating a phone or switching apps). Move or zoom the map a little, then press FORGE again.'); return; }
     if (state.terrain) pushUndo();                  // forging a new region can be undone too
     clearRegion();
     setGrid($('gridSize').value);                   // the new region takes the frame's grid
@@ -3062,7 +3085,7 @@ function setFrameGrid(key){
   key = gridKey(key); const g = GRIDS[key];
   $('gridSize').value = key;
   if (FMW === g.w && FMH === g.h) return;
-  const k = currentKps();                             // keep the chosen km per square; the frame covers more or less ground
+  const k = currentKps();                             // NaN-safe: setKps ignores a bad value and keeps the zoom                             // keep the chosen km per square; the frame covers more or less ground
   FMW = g.w; FMH = g.h;
   $('frameLabel').textContent = `${g.w}×${g.h}`;
   $('gridIntro').textContent = key === 'emerald' ? "Emerald's 28×15 grid" : `the ${g.name} ${g.w}×${g.h} grid`;
