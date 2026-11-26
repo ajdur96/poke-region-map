@@ -500,6 +500,65 @@ async function fetchLandcover(b, tracker){
   return { z, p1, pw, ph, data };
 }
 
+// NDVI (vegetation greenness): MODIS Vegetation Indices 16-day 250 m (MOD13Q1 v6.1) via Microsoft Planetary Computer.
+// One growing-season composite (mid-summer for the region's hemisphere), one item per MODIS tile, drawn into the
+// same Web Mercator window as the land cover. Used by the overworld generator for tall grass. Optional: if it fails,
+// the generator estimates greenness from land cover.
+const PC_STAC = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
+async function fetchNdvi(b, tracker){
+  const nw = L.latLng(b.n, b.w), se = L.latLng(b.s, b.e);
+  let z = 16; while (z > 1 && map.project(se, z).x - map.project(nw, z).x > 600) z--;
+  const p1 = map.project(nw, z), p2 = map.project(se, z), pw = Math.ceil(p2.x - p1.x), ph = Math.ceil(p2.y - p1.y);
+  const north = (b.n + b.s)/2 >= 0;
+  const datetime = north ? '2024-07-01T00:00:00Z/2024-08-15T00:00:00Z' : '2024-01-01T00:00:00Z/2024-02-15T00:00:00Z';
+  let feats = [];
+  try {
+    const res = await fetch(PC_STAC, { method:'POST', headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({ collections:['modis-13Q1-061'], bbox:[b.w, b.s, b.e, b.n], datetime, limit:100 }) });
+    feats = (await res.json()).features || [];
+  } catch (e){ return { z, p1, pw, ph, data:null }; }
+  const byTile = new Map();                       // one composite per MODIS tile (hXXvYY): the latest in the window
+  for (const f of feats){ const m = f.id.match(/h\d\dv\d\d/), k = m ? m[0] : f.id, prev = byTile.get(k);
+    if (!prev || (f.properties.datetime || '') > (prev.properties.datetime || '')) byTile.set(k, f); }
+  if (!byTile.size || byTile.size > 16) return { z, p1, pw, ph, data:null, tooBig:byTile.size > 16 };
+  const off = document.createElement('canvas'); off.width = pw; off.height = ph;
+  const octx = off.getContext('2d', { willReadFrequently:true });
+  let got = 0;
+  await Promise.all([...byTile.values()].map(async f => {
+    const bb = f.bbox || [b.w, b.s, b.e, b.n];
+    const w = Math.max(b.w, bb[0]), s2 = Math.max(b.s, bb[1]), e = Math.min(b.e, bb[2]), n = Math.min(b.n, bb[3]);
+    if (e <= w || n <= s2) return;
+    const a = map.project(L.latLng(n, w), z), c = map.project(L.latLng(s2, e), z);
+    const x = Math.round(a.x - p1.x), y = Math.round(a.y - p1.y), wpx = Math.max(1, Math.round(c.x - a.x)), hpx = Math.max(1, Math.round(c.y - a.y));
+    const url = `${WC_API}/${w.toFixed(5)},${s2.toFixed(5)},${e.toFixed(5)},${n.toFixed(5)}/${wpx}x${hpx}.png`
+      + `?collection=modis-13Q1-061&item=${encodeURIComponent(f.id)}&assets=250m_16_days_NDVI&rescale=0,10000&dst_crs=epsg:3857`;
+    if (tracker) tracker.total++;
+    try { const img = await loadImg(url); octx.drawImage(img, x, y, wpx, hpx); got++; }
+    catch (err) {}
+    finally { if (tracker){ tracker.done++; tracker.onTick(); } }
+  }));
+  let data = null;
+  if (got) try { data = octx.getImageData(0, 0, pw, ph).data; } catch (e) { data = null; }
+  return { z, p1, pw, ph, data, date:[...byTile.values()][0].properties.datetime };
+}
+// NDVI per sub-cell: 0 = no data, otherwise 1 + NDVI×254 (NDVI below 0, i.e. water, counts as 0)
+function buildNdvi(nd){
+  if (!(nd && nd.data)){ state.ndvi = null; return false; }
+  const g = state.gen, f = 2 ** (nd.z - g.z), K = 4, out = new Uint8Array(SW*SH); let any = 0;
+  for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
+    let sum = 0, n = 0;
+    for (let j = 0; j < K; j++) for (let i = 0; i < K; i++){
+      const p = gridToPx(g, (sx + (i+.5)/K)/SUB, (sy + (j+.5)/K)/SUB);
+      const x = Math.floor(p.x*f - nd.p1.x), y = Math.floor(p.y*f - nd.p1.y);
+      if (x < 0 || y < 0 || x >= nd.pw || y >= nd.ph) continue;
+      const k = (y*nd.pw + x)*4; if (nd.data[k+3] < 128) continue;
+      sum += nd.data[k]; n++;
+    }
+    if (n){ out[sy*SW + sx] = 1 + Math.round(sum/n/255*254); any++; }
+  }
+  state.ndvi = any ? out : null; return !!any;
+}
+
 // Bundled 10° tiles (climate, and land cover if built): one byte per pixel, row 0 = north edge
 const bundleCache = new Map();
 async function loadBundleTiles(dir, b){
@@ -2552,7 +2611,7 @@ function endProgress(){ $('progress').style.display = 'none'; $('progressFill').
 
 // Wipe the previous region so old towns never mix with the new one
 function clearRegion(){
-  Object.assign(state, { terrain:null, cover:null, climate:null, coast:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
+  Object.assign(state, { terrain:null, cover:null, climate:null, coast:null, elev:null, lake:null, ndvi:null, sq:null, sqElev:null, towns:[], routes:[],
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
     roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), roadLines:[], names:null, notes:[], timings:{}, source:null, variant:0,
     regionName:'', regionNameCustom:false });
@@ -2577,11 +2636,12 @@ async function forge(opts = {}){
 
     const tiles = { done:0, total:0, onTick(){ setProgress(2 + 43*this.done/Math.max(1, this.total), null, `${this.done}/${this.total} tiles`); } };
     let bytes = 0; const onBytes = n => { bytes += n; };
-    const [osm, dem, stat, lc] = await Promise.all([
+    const [osm, dem, stat, lc, nd] = await Promise.all([
       fetchMosaic(b, (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, 600, 1600, 16, tiles),
       fetchMosaic(b, (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`, 300, 900, 13, tiles),
       timed('map data', ob => loadStatic(b, ob, tiles), onBytes).catch(() => null),
-      fetchLandcover(b, tiles)
+      fetchLandcover(b, tiles),
+      fetchNdvi(b, tiles).catch(() => null)
     ]);
     if (!dem.data) state.notes.push('Elevation unavailable — no mountains.');
     state.gen = makeGen(b, osm.z);
@@ -2591,6 +2651,7 @@ async function forge(opts = {}){
     buildCoast(osm);
     await buildClimate(b);
     const lcSource = await buildCover(lc, b);
+    if (!buildNdvi(nd)) state.notes.push('Vegetation greenness (NDVI) unavailable — overworld tall grass estimated from land cover.');
     if (lcSource === 'bundle') state.notes.push(lc.tooBig ? 'Large frame — land cover from the offline bundle.' : 'Live land cover unavailable — used the offline bundle.');
     if (lcSource === 'none') state.notes.push(state.climate ? 'Land cover unavailable — terrain types from climate only.' : 'Land cover and climate unavailable.');
 
@@ -3022,7 +3083,7 @@ function takeSnap(over = {}){
     startId:state.startId, nextId:state.nextId, seed:state.seed, variant:state.variant, grid:state.grid || 'emerald',
     regionName:state.regionName, regionNameCustom:state.regionNameCustom,
     flavor:over.flavor ?? $('flavorNames').checked, bendy:over.bendy ?? +$('bendy').value,
-    shared:{ elev:state.elev, river:state.river, riverNames:state.riverNames, roadSq:state.roadSq, roadEdges:state.roadEdges,
+    shared:{ elev:state.elev, ndvi:state.ndvi, river:state.river, riverNames:state.riverNames, roadSq:state.roadSq, roadEdges:state.roadEdges,
              roadEdgeName:state.roadEdgeName, names:state.names, gen:state.gen, notes:state.notes, timings:state.timings, source:state.source }
   };
 }
@@ -3099,7 +3160,7 @@ function serialize(){
   const g = state.gen, c = g.b.corners, ll = p => ({ lat:p.lat, lng:p.lng }), n = state.names;
   return {
     format:'regionMapForge-editor/1', savedAt:new Date().toISOString(), grid:state.grid || 'emerald',
-    terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, coverPaint:state.coverPaint ? toB64(state.coverPaint) : null, climate:state.climate ? toB64(state.climate) : null, coast:state.coast ? packCoast(state.coast) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null,
+    terrain:toB64(state.terrain), cover:state.cover ? toB64(state.cover) : null, coverPaint:state.coverPaint ? toB64(state.coverPaint) : null, climate:state.climate ? toB64(state.climate) : null, coast:state.coast ? packCoast(state.coast) : null, elev:state.elev ? f32ToB64(state.elev) : null, river:state.river ? toB64(state.river) : null, ndvi:state.ndvi ? toB64(state.ndvi) : null,
     riverNames:[...state.riverNames], roadSq:f32ToB64(state.roadSq), roadEdges:[...state.roadEdges], roadEdgeName:[...(state.roadEdgeName || [])],
     names:n ? { lake:[...n.lake], sea:[...n.sea], range:[...n.range], land:[...n.land].map(([k, v]) => [k, { name:v.name, kind:v.kind }]), peaks:n.peaks } : null,
     gen:{ z:g.z, o:g.o, ex:g.ex, ey:g.ey, det:g.det, b:{ ...g.b, corners:{ tl:ll(c.tl), tr:ll(c.tr), bl:ll(c.bl), br:ll(c.br) } } },
@@ -3120,7 +3181,7 @@ function deserialize(o){
     terrain:fromB64(o.terrain), cover:o.cover ? fromB64(o.cover) : null, coverPaint:o.coverPaint ? fromB64(o.coverPaint) : null, climate:o.climate ? fromB64(o.climate) : null, coast:o.coast ? unpackCoast(o.coast, G.w*TILE*G.h*TILE) : null, towns:o.towns, routes:o.routes, startId:o.startId, nextId:o.nextId, seed:o.seed ?? 0, variant:o.variant || 0,
     regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
     flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
-    shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
+    shared:{ elev:o.elev ? b64ToF32(o.elev) : null, ndvi:o.ndvi ? fromB64(o.ndvi) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
       roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(G.w*G.h), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []), roadLines:[],
       names:n ? { lake:new Map(n.lake), sea:new Map(n.sea), range:new Map(n.range), land:new Map(n.land), peaks:n.peaks } : null,
       gen:o.gen, notes:o.notes || [], timings:{},
@@ -3150,7 +3211,7 @@ function fromLegacyExport(o){
   return {
     terrain, towns, routes:(o.routes || []).map(r => ({ a:r.from, b:r.to, name:r.name, custom:!!r.customName })),
     startId:start ? start.id : null, nextId:Math.max(0, ...towns.map(t => t.id)) + 1, seed:0, flavor:false, bendy:50, regionName:o.regionName || '',
-    shared:{ elev:null, river, riverNames:new Map(), roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), roadLines:[],
+    shared:{ elev:null, ndvi:null, river, riverNames:new Map(), roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), roadLines:[],
              names:null, gen, notes:['Imported from an older export: elevation, roads and feature names weren\'t saved in it.'], timings:{}, source:null }
   };
 }
@@ -3630,7 +3691,8 @@ $('jsonBtn').onclick = () => {
 
 // ===== Overworld maps (prototype): 3×3 preview of walkable maps, one per square =====
 // Generation lives in overworld/overworldGen.js; this only gathers the region data and draws the result.
-function overworldInput(N, center){
+function overworldInput(center){
+  const N = 36;                                    // decided 2026-11-26
   const paths = routePaths(), links = [], active = [];
   for (const p of paths) if (p) for (let i = 1; i < p.squares.length; i++) links.push({ a:p.squares[i-1], b:p.squares[i] });
   for (const t of state.towns){                    // multi-square towns: their squares join up, and count as active
@@ -3640,7 +3702,8 @@ function overworldInput(N, center){
   }
   const x0 = Math.min(MW - 3, Math.max(0, center.x - 1)), y0 = Math.min(MH - 3, Math.max(0, center.y - 1));
   return { seed:state.seed || 0, N, gridW:MW, gridH:MH, sub:SUB, terrain:state.terrain, cover:drawCover(), lake:state.lake,
-           river:state.river, elev:state.elev, kmPerSquare:kmPerSquare(), links, active, roads:state.roadLines || [],
+           river:state.river, elev:state.elev, ndvi:state.ndvi, climate:state.climate, kmPerSquare:kmPerSquare(), links, active,
+           townSquares:state.towns.flatMap(t => footprint(t)), roads:state.roadLines || [],
            window:{ x0, y0, w:3, h:3 } };
 }
 function overworldCenter(){
@@ -3659,30 +3722,33 @@ function showOverworld(){
     box.style.cssText = 'position:fixed;inset:4vh 4vw;z-index:9999;background:#1c2440;border:3px solid #000;border-radius:8px;padding:10px;overflow:auto;color:#e8ecf8;font:12px monospace';
     box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-family:'Press Start 2P',monospace;font-size:10px">OVERWORLD 3×3 (PROTOTYPE)</b>
-        <label>size <select id="owN"><option value="24">24×24</option><option value="32" selected>32×32</option></select></label>
+        <label>view <select id="owMode"><option value="terrain" selected>terrain</option><option value="walk">walkability</option></select></label>
         <label><input type="checkbox" id="owSeams" checked> seams</label>
         <label><input type="checkbox" id="owBand"> seam bands</label>
         <button id="owClose">CLOSE</button></div>
       <canvas id="owCanvas" style="image-rendering:pixelated;max-width:100%;border:2px solid #000;cursor:crosshair"></canvas>
       <div id="owHover" style="margin-top:4px;color:#ffd76a">Hover (or tap) the map to see what each tile is.</div>
-      <div style="margin-top:6px">Key: <span style="color:#e8b060">■</span> path <span style="color:#a4dc6e">■</span> verge
-        <span style="color:#78c850">■</span> open ground <span style="color:#287038">■</span> trees <span style="color:#96785a">■</span> rock
-        <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge <span style="color:#604e46">■</span> cliff
-        <span style="color:#c4a870">■</span> ledge: dark lip + arrow on the side you jump toward (one-way) · <span style="color:#faf6ec">■</span> stairs: striped across the climb (side stairs striped the other way)
-        · lighter ground is higher · dark squares have no route or town</div>
+      <div id="owKey" style="margin-top:6px"></div>
       <pre id="owReport" style="white-space:pre-wrap;margin-top:6px"></pre>`;
     document.body.appendChild(box);
     $('owClose').onclick = () => box.remove();
-    for (const id of ['owN', 'owSeams', 'owBand']) $(id).onchange = drawOverworld;
+    for (const id of ['owMode', 'owSeams', 'owBand']) $(id).onchange = drawOverworld;
   }
   drawOverworld();
 }
 function drawOverworld(){
-  const N = +$('owN').value, t0 = performance.now();
+  const t0 = performance.now();
   let res;
-  try { res = OverworldGen.generate(overworldInput(N, overworldCenter())); }
+  try { res = OverworldGen.generate(overworldInput(overworldCenter())); }
   catch (e){ $('owReport').textContent = 'Generation failed: ' + e.message; return; }
-  const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked, scale:6 });
+  $('owKey').innerHTML = $('owMode').value === 'walk'
+    ? 'Key: <span style="color:#cee8b0">■</span> walk <span style="color:#3a3c48">■</span> wall <span style="color:#48a0e0">■</span> surf <span style="color:#f09628">■</span> ledge (one-way) · dark squares have no route or town'
+    : `Key: <span style="color:#e8b060">■</span> path <span style="color:#a4dc6e">■</span> verge <span style="color:#78c850">■</span> open ground
+       <span style="color:#389640">■</span> tall grass <span style="color:#288060">■</span> long grass (no running) <span style="color:#287038">■</span> trees <span style="color:#96785a">■</span> rock
+       <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge <span style="color:#604e46">■</span> cliff
+       <span style="color:#c4a870">■</span> ledge: dark lip + arrow toward the jump side · <span style="color:#faf6ec">■</span> stairs: striped across the climb
+       · lighter ground is higher · wild squares show their route as faintly tinted ground · dark squares have no route or town`;
+  const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked, scale:6, mode:$('owMode').value });
   const cv = $('owCanvas'), k = Math.max(0.5, Math.min(2, Math.min(innerWidth*0.85, innerHeight*0.7)/img.width));
   cv.width = img.width; cv.height = img.height; cv.style.width = Math.round(img.width*k) + 'px';
   cv.onmousemove = e => { const b = cv.getBoundingClientRect();
@@ -3697,6 +3763,7 @@ function drawOverworld(){
     `Repairs: ${r.repairs} · fallbacks: ${r.fallbacks} · first-pass reachable: ${r.firstPassReachable}/${r.squares} · connected groups: ${r.components}`,
     `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.ledgeTiles} ledge and ${r.stairTiles} stair tiles · ${r.trapFixes} ledge tile(s) made two-way so nothing traps you`,
     `Exploration: ${r.waypoints} waypoint(s) · ${Math.round(r.offPathShare*100)}% of reachable ground is off the path (target 80%)${r.needSurf.length ? ' · needs Surf: ' + r.needSurf.join(' ') : ''}`,
+    `Off-path content: ${r.spursGap} hidden gap(s) and ${r.spursTrail} side trail(s) · ${r.loops} loop(s) · ${r.ponds} pond(s) · ${r.thicketTiles} thicket tiles · tall grass ${Math.round(r.grassShare*100)}% of reachable ground (${r.grassSource})${r.wild.length ? ' · wild squares: ' + r.wild.join(' ') : ''}`,
     ...res.contracts.map(c => `Edge ${c.a.x},${c.a.y}↔${c.b.x},${c.b.y}: port ${c.pos}, path ${c.path}, verge ${c.verge} (${c.source === 'road' ? 'real road' : 'seeded'})${c.notes.length ? ' — ' + [...new Set(c.notes)].join('; ') : ''}`),
     ...res.squares.filter(s => s.log.length).map(s => `Square ${s.x},${s.y}: ${s.log.join('; ')}`),
     (state.roadLines || []).length ? '' : 'Note: no road geometry in memory (restored or imported region), so ports use seeded positions. Forge again to use real roads.'

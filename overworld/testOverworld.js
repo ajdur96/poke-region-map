@@ -45,7 +45,7 @@ const failures = [];
 const check = (cond, msg) => { if (!cond) failures.push(msg); console.log((cond ? 'PASS ' : 'FAIL ') + msg); };
 const digest = res => res.squares.map(s => `${s.x},${s.y}:` + OG.hash32(...s.tiles)).join('|');
 
-for (const N of [24, 32]){
+for (const N of [36]){
   const base = { ...region, seed:12345, N, window:{ x0:1, y0:1, w:3, h:3 } };
   const t0 = Date.now(); const res = OG.generate(base); const ms = Date.now() - t0;
   const res2 = OG.generate(base);
