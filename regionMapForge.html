@@ -3722,6 +3722,7 @@ function showOverworld(){
     box.style.cssText = 'position:fixed;inset:4vh 4vw;z-index:9999;background:#1c2440;border:3px solid #000;border-radius:8px;padding:10px;overflow:auto;color:#e8ecf8;font:12px monospace';
     box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-family:'Press Start 2P',monospace;font-size:10px">OVERWORLD 3×3 (PROTOTYPE)</b>
+        <label>terrace blocks <select id="owBlock"><option value="4" selected>4×4</option><option value="3">3×3</option></select></label>
         <label>view <select id="owMode"><option value="terrain" selected>terrain</option><option value="walk">walkability</option></select></label>
         <label><input type="checkbox" id="owSeams" checked> seams</label>
         <label><input type="checkbox" id="owBand"> seam bands</label>
@@ -3732,21 +3733,23 @@ function showOverworld(){
       <pre id="owReport" style="white-space:pre-wrap;margin-top:6px"></pre>`;
     document.body.appendChild(box);
     $('owClose').onclick = () => box.remove();
-    for (const id of ['owMode', 'owSeams', 'owBand']) $(id).onchange = drawOverworld;
+    for (const id of ['owMode', 'owSeams', 'owBand', 'owBlock']) $(id).onchange = drawOverworld;
   }
   drawOverworld();
 }
 function drawOverworld(){
   const t0 = performance.now();
   let res;
-  try { res = OverworldGen.generate(overworldInput(overworldCenter())); }
+  try { res = OverworldGen.generate({ ...overworldInput(overworldCenter()), terraceBlock:+$('owBlock').value }); }
   catch (e){ $('owReport').textContent = 'Generation failed: ' + e.message; return; }
   $('owKey').innerHTML = $('owMode').value === 'walk'
     ? 'Key: <span style="color:#cee8b0">■</span> walk <span style="color:#3a3c48">■</span> wall <span style="color:#48a0e0">■</span> surf <span style="color:#f09628">■</span> ledge (one-way) · dark squares have no route or town'
     : `Key: <span style="color:#e8b060">■</span> path <span style="color:#a4dc6e">■</span> verge <span style="color:#78c850">■</span> open ground
        <span style="color:#389640">■</span> tall grass <span style="color:#288060">■</span> long grass (no running) <span style="color:#287038">■</span> trees <span style="color:#96785a">■</span> rock
        <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge <span style="color:#604e46">■</span> cliff
-       <span style="color:#c4a870">■</span> ledge: dark lip + arrow toward the jump side · <span style="color:#faf6ec">■</span> stairs: striped across the climb
+       <span style="color:#c4a870">■</span> ledge: dark lip + arrow toward the jump side · stairs, striped across the climb:
+       <span style="color:#d6d6de">■</span> stone <span style="color:#c49260">■</span> dirt <span style="color:#f0d69c">■</span> sand <span style="color:#ecf4ff">■</span> snow
+       · hatched = scenery map (look-only) · checkered strips = border blocks
        · lighter ground is higher · wild squares show their route as faintly tinted ground · dark squares have no route or town`;
   const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked, scale:6, mode:$('owMode').value });
   const cv = $('owCanvas'), k = Math.max(0.5, Math.min(2, Math.min(innerWidth*0.85, innerHeight*0.7)/img.width));
@@ -3763,6 +3766,7 @@ function drawOverworld(){
     `Repairs: ${r.repairs} · fallbacks: ${r.fallbacks} · first-pass reachable: ${r.firstPassReachable}/${r.squares} · connected groups: ${r.components}`,
     `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.ledgeTiles} ledge and ${r.stairTiles} stair tiles · ${r.trapFixes} ledge tile(s) made two-way so nothing traps you`,
     `Exploration: ${r.waypoints} waypoint(s) · ${Math.round(r.offPathShare*100)}% of reachable ground is off the path (target 80%)${r.needSurf.length ? ' · needs Surf: ' + r.needSurf.join(' ') : ''}`,
+    `Terraces: ${r.terraceBlock}×${r.terraceBlock} blocks · ${r.cliffRuns} straight cliff runs · ${r.stairFlights} stair flights · knight's-move conflicts: ${r.diagStairConflicts}${r.scenery.length ? ' · scenery maps: ' + r.scenery.join('; ') : ''}`,
     `Off-path content: ${r.spursGap} hidden gap(s) and ${r.spursTrail} side trail(s) · ${r.loops} loop(s) · ${r.ponds} pond(s) · ${r.thicketTiles} thicket tiles · tall grass ${Math.round(r.grassShare*100)}% of reachable ground (${r.grassSource})${r.wild.length ? ' · wild squares: ' + r.wild.join(' ') : ''}`,
     ...res.contracts.map(c => `Edge ${c.a.x},${c.a.y}↔${c.b.x},${c.b.y}: port ${c.pos}, path ${c.path}, verge ${c.verge} (${c.source === 'road' ? 'real road' : 'seeded'})${c.notes.length ? ' — ' + [...new Set(c.notes)].join('; ') : ''}`),
     ...res.squares.filter(s => s.log.length).map(s => `Square ${s.x},${s.y}: ${s.log.join('; ')}`),

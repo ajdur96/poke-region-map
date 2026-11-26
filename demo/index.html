@@ -228,7 +228,7 @@
 })();
 </script>
 <script>
-/* Region Map Forge — overworld map generator (prototype "ow-proto-3").
+/* Region Map Forge — overworld map generator (prototype "ow-proto-4").
  *
  * Turns region-map squares into walkable tile maps, one map per square, joined by seamless connections.
  * Design and decisions: the project's "Overworld Maps — Decisions Log" (claude/overworld-map-decisions.md).
@@ -257,7 +257,7 @@
 (function (root) {
 'use strict';
 
-const VERSION = 'ow-proto-3';
+const VERSION = 'ow-proto-4';
 const BAND = 7;                                    // seam band depth in metatiles (pokeemerald MAP_OFFSET = 7)
 const PAD = 8;                                     // raster margin around the window so results don't depend on it
 
@@ -295,9 +295,18 @@ const PROFILE = [
   { name:'water',     path:3, verge:1, cost:Infinity, wallFrac:0, wall:null, grassMax:0, ndviGuess:0, natural:false }
 ];
 const LIMITS = { pathMin:3, pathMax:6, vergeMin:1, vergeMax:4 };
-const COST = { roadFactor:0.3, slopeK:2, noiseM:1.5, noiseScale:4, turn:0.1, reuse:2, cliff:5, riverCrossing:8, surf:2, peak:12,
+const COST = { corner:25, roadFactor:0.3, slopeK:2, noiseM:1.5, noiseScale:4, turn:0.1, reuse:2, cliff:5, riverCrossing:8, surf:2, peak:12,
                repairWall:6, repairRiver:10 };
-const RELIEF = { minStepM:12, stepDivisor:4, compress:3, noise:0.45, ledgeChance:0.35, stairChance:0.05, chunk:8 };
+const RELIEF = { minStepM:12, stepDivisor:4, compress:3, noise:0.45 };
+// What a cliff run becomes, by the land cover on its high side (starting values; Claude's judgment): the chance a
+// straight run carries a ledge, the chance it gets a flight of stairs, and the stairs' look (a palette, not new shapes).
+const CROSSING = {
+  [0]:{ ledge:0.55, stair:0.2, style:'stone' },  [8]:{ ledge:0.55, stair:0.2, style:'stone' },  [5]:{ ledge:0.4, stair:0.2, style:'stone' },
+  [1]:{ ledge:0.25, stair:0.3, style:'dirt' },   [6]:{ ledge:0.2, stair:0.3, style:'dirt' },    [2]:{ ledge:0.3, stair:0.2, style:'dirt' },
+  [3]:{ ledge:0.45, stair:0.2, style:'sand' },   [7]:{ ledge:0.35, stair:0.2, style:'snow' },   [4]:{ ledge:0.35, stair:0.2, style:'snow' },
+  [10]:{ ledge:0.15, stair:0.35, style:'stone' }, [9]:{ ledge:0.2, stair:0.5, style:'stone' }
+};
+const STAIR_STYLES = ['none', 'stone', 'dirt', 'sand', 'snow'];
 const WAYPOINTS = { min:1, max:3, candidates:48, spacing:6 };
 const WILD = { naturalShare:0.6, path:2, verge:1, extraNoise:1.6, minWaypoints:2 };
 const CONTENT = { offPathTarget:0.8, maxSpurs:8, minPocket:4, gapShare:0.5, loopChance:0.5, wildLoopChance:0.7,
@@ -531,30 +540,100 @@ function generate(inp){
       else if (!isWall(copy[i]) && walls >= 5) tiles[i] = wallTile(cls[i]);
     }
   }
-  // relief: terrace levels from elevation (+ smooth noise so the contours wander), cliffs on level boundaries
-  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++){
-    const gx = RX0 + x, gy = RY0 + y;
+  // relief (proto-4): rectilinear terraces. Levels are decided per block of B×B tiles (B = 3 or 4, aligned to global
+  // tile coordinates so seams match), lightly smoothed, so every level boundary is a straight horizontal or vertical
+  // run with right-angle turns. Boundaries become cliffs (2 tiles thick where the drop is 2+ levels), straight runs can
+  // carry one-way ledges (never on corners) and stairs (spaced at least a knight's move from stairs on other cliffs).
+  const B = inp.terraceBlock === 3 ? 3 : 4;
+  const bx0 = Math.floor(RX0/B) - 1, by0 = Math.floor(RY0/B) - 1, BW = Math.ceil(RW/B) + 3, BH = Math.ceil(RH/B) + 3;
+  const blev = new Int16Array(BW*BH);
+  for (let by = 0; by < BH; by++) for (let bx = 0; bx < BW; bx++){
+    const gx = (bx0 + bx)*B + B/2, gy = (by0 + by)*B + B/2;
     const e = sampler.elev(gx, gy) + RELIEF.noise*sampler.stepM*(2*smoothNoise(sLev, gx, gy, 7) - 1);
-    // log-compressed so big mountains get a handful of tall terraces rather than dozens of thin ones
     const d = Math.max(0, (e - sampler.elevMin)/sampler.stepM);
-    lev[y*RW + x] = Math.floor(RELIEF.compress*Math.log2(1 + d/RELIEF.compress));
+    blev[by*BW + bx] = Math.floor(RELIEF.compress*Math.log2(1 + d/RELIEF.compress));   // log-compressed: big mountains get a few tall terraces
   }
+  { const copy = blev.slice();                     // smoothing: a block that sticks out from 3+ of its 4 neighbours joins them
+    for (let by = 1; by < BH - 1; by++) for (let bx = 1; bx < BW - 1; bx++){
+      const i = by*BW + bx, nb = [copy[i - 1], copy[i + 1], copy[i - BW], copy[i + BW]].sort((p, q) => p - q);
+      if (nb.filter(v => v !== copy[i]).length >= 3) blev[i] = nb[1];
+    } }
+  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++)
+    lev[y*RW + x] = blev[(Math.floor((RY0 + y)/B) - by0)*BW + Math.floor((RX0 + x)/B) - bx0];
+  const drop = new Uint8Array(RW*RH), lowers = new Uint8Array(RW*RH);
+  const FD = [[FACE.S, 0, 1], [FACE.E, 1, 0], [FACE.W, -1, 0], [FACE.N, 0, -1]];
   for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++){
     const i = y*RW + x; if (water[i]) continue;
-    let best = FACE.NONE, drop = 0;
-    for (const [f, dx, dy] of [[FACE.S, 0, 1], [FACE.E, 1, 0], [FACE.W, -1, 0], [FACE.N, 0, -1]]){
+    for (const [f, dx, dy] of FD){
       const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= RW || ny >= RH) continue;
       const j = ny*RW + nx; if (water[j]) continue;
-      const d = lev[i] - lev[j]; if (d > 0 && best === FACE.NONE){ best = f; drop = d; }
+      const d = lev[i] - lev[j];
+      if (d > 0){ lowers[i]++; if (face[i] === FACE.NONE){ face[i] = f; drop[i] = Math.min(d, 9); } }
     }
-    if (best === FACE.NONE) continue;
-    face[i] = best; tiles[i] = TILE.CLIFF;
-    const gx = RX0 + x, gy = RY0 + y, chunk = RELIEF.chunk;
-    // one-way ledges on gentle (1-level) cliffs facing south, east or west; chosen per chunk so runs stay whole
-    if (drop === 1 && best !== FACE.N && rand01(sLedge, Math.floor(gx/chunk), Math.floor(gy/chunk), best) < RELIEF.ledgeChance)
-      tiles[i] = best === FACE.S ? TILE.LEDGE_S : best === FACE.E ? TILE.LEDGE_E : TILE.LEDGE_W;
-    else if (rand01(sStair, gx, gy) < RELIEF.stairChance) tiles[i] = stairsFor(best);   // a way up to explore
+    if (face[i] !== FACE.NONE) tiles[i] = TILE.CLIFF;
   }
+  // tall faces: a 2+ level drop makes the cliff 2 tiles thick (the tile behind the edge, same level, same facing)
+  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++){
+    const i = y*RW + x; if (tiles[i] !== TILE.CLIFF || drop[i] < 2 || lowers[i] !== 1) continue;
+    const [, dx, dy] = FD.find(f => f[0] === face[i]), bx = x - dx, by = y - dy;
+    if (bx < 0 || by < 0 || bx >= RW || by >= RH) continue;
+    const j = by*RW + bx; if (water[j] || face[j] !== FACE.NONE || lev[j] !== lev[i]) continue;
+    face[j] = face[i]; drop[j] = 0; tiles[j] = TILE.CLIFF;          // drop 0 marks the back row of a tall face
+  }
+  // straight runs: edge tiles with one lower neighbour (corners have two), same facing, same drop, side by side
+  const runs = [];
+  const runOf = new Int32Array(RW*RH).fill(-1);
+  for (const f of [FACE.S, FACE.N, FACE.E, FACE.W]){
+    const horizontal = f === FACE.S || f === FACE.N;
+    const outer = horizontal ? RH : RW, inner = horizontal ? RW : RH;
+    for (let o = 0; o < outer; o++){
+      let start = -1;
+      const at = t => horizontal ? o*RW + t : t*RW + o;
+      const edge = t => { const i = at(t); return face[i] === f && drop[i] >= 1 && lowers[i] === 1; };
+      for (let t = 0; t <= inner; t++){
+        const ok = t < inner && edge(t) && (start < 0 || drop[at(t)] === drop[at(start)]);
+        if (!ok && start >= 0){
+          const id = runs.length, cells = [];
+          for (let u = start; u < t; u++){ const ci = at(u); cells.push(ci); runOf[ci] = id; }
+          runs.push({ face:f, cells, drop:drop[cells[0]], g:horizontal ? [RX0 + start, RY0 + o] : [RX0 + o, RY0 + start] });
+          start = -1;
+        }
+        if (start < 0 && t < inner && edge(t)) start = t;
+      }
+    }
+  }
+  const ledgeChance = c => CROSSING[c] ? CROSSING[c].ledge : 0.3, stairChance = c => CROSSING[c] ? CROSSING[c].stair : 0.2;
+  const stairAt = new Map();                        // tile → run id (for the knight's-move rule)
+  const diagConflict = (i, id) => { const x = i % RW, y = (i/RW) | 0;
+    for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]){ const j = (y + dy)*RW + x + dx; if (stairAt.has(j) && stairAt.get(j) !== id) return true; }
+    return false; };
+  const behind = i => { const [, dx, dy] = FD.find(f => f[0] === face[i]); const j = i - dy*RW - dx; return face[j] === face[i] && drop[j] === 0 ? j : -1; };
+  for (let id = 0; id < runs.length; id++){
+    const run = runs[id], n = run.cells.length, r = mulberry32(hash32(sLedge, run.g[0], run.g[1], run.face));
+    const mid = run.cells[n >> 1], c = cls[mid];
+    let ledge = null;
+    // ledges: one level only, facing S/E/W, a segment of 3+ tiles that never touches the run's ends (corners)
+    if (run.face !== FACE.N && run.drop === 1 && n >= 5 && r() < ledgeChance(c)){
+      const len = 3 + Math.floor(r()*(n - 4)), start = 1 + Math.floor(r()*(n - 1 - len));
+      ledge = [start, start + len - 1];
+      for (let u = start; u < start + len; u++){ const i = run.cells[u];
+        tiles[i] = run.face === FACE.S ? TILE.LEDGE_S : run.face === FACE.E ? TILE.LEDGE_E : TILE.LEDGE_W; }
+    }
+    // stairs: a 1–2-wide flight somewhere along the run (through both rows of a tall face), away from the ends and ledges
+    if (n >= 3 && r() < stairChance(c)){
+      const w = n >= 8 && r() < 0.5 ? 2 : 1, pos = 1 + Math.floor(r()*Math.max(1, n - 1 - w));
+      const clash = ledge && pos <= ledge[1] + 1 && pos + w - 1 >= ledge[0] - 1;
+      const cells = []; for (let u = pos; u < pos + w && u < n - 1; u++){ cells.push(run.cells[u]); const b2 = behind(run.cells[u]); if (b2 >= 0) cells.push(b2); }
+      if (!clash && cells.length && !cells.some(i => diagConflict(i, id))){
+        for (const i of cells){ tiles[i] = stairsFor(face[i]); stairAt.set(i, id); }
+      }
+    }
+  }
+  const runStats = { runs:runs.length };
+  // cliff corners (where a cliff turns): paths and ports keep away, so stairs never meet diagonally at a turn
+  const corner = new Uint8Array(RW*RH);
+  for (let i = 0; i < RW*RH; i++) if (face[i] !== FACE.NONE && drop[i] >= 1 && (lowers[i] >= 2 || runOf[i] < 0)) corner[i] = 1;
+  for (const run of runs){ corner[run.cells[0]] = 1; corner[run.cells[run.cells.length - 1]] = 1; }   // run ends: where the cliff steps or turns
 
   // --- Wild squares: no real road through them, not a town, and mostly natural cover → no defined path ---
   const townSet = new Set((inp.townSquares || []).map(q => sqId(q.x, q.y)));
@@ -625,11 +704,13 @@ function generate(inp){
       }
       return false;
     };
-    const lakeAt = pos => approachCells(pos, i => water[i] && !river[i]);
-    if (source === 'seeded' && lakeAt(clamped)){
-      for (let off = 1; off <= cMax - cMin; off++){
+    // cliffs that run along the approach (instead of across it) would turn into stairs running along a cliff
+    const along = i => face[i] !== FACE.NONE && (horiz ? (face[i] === FACE.N || face[i] === FACE.S) : (face[i] === FACE.E || face[i] === FACE.W));
+    const lakeAt = pos => approachCells(pos, i => (water[i] && !river[i]) || corner[i] || along(i));
+    if (lakeAt(clamped)){                             // slide to dry land away from cliff corners (road ports only a little)
+      for (let off = 1; off <= (source === 'road' ? 3 : cMax - cMin); off++){
         const cand = [clamped - off, clamped + off].find(q => q >= cMin && q <= cMax && !lakeAt(q));
-        if (cand !== undefined){ notes.push(`port moved ${clamped} → ${cand} to keep the approach on dry land`); clamped = cand; break; }
+        if (cand !== undefined){ notes.push(`port moved ${clamped} → ${cand} to keep the approach on dry land and off cliff corners`); clamped = cand; break; }
       }
     }
     let lo2 = lo, hi2 = hi;
@@ -656,6 +737,46 @@ function generate(inp){
     }
     return set;
   };
+  // --- Borders (B), corners (D) and scenery maps (C) ---
+  // B: each map's border block (the pattern the engine repeats wherever no map is connected) suits the square:
+  // water for mostly-water squares, rock for rocky/dry/cold ones, trees otherwise.
+  const borderType = (x, y) => {
+    let w = 0, rock = 0, n = 0;
+    for (let yy = 0; yy < inp.sub; yy++) for (let xx = 0; xx < inp.sub; xx++){
+      const sxx = x*inp.sub + xx, syy = y*inp.sub + yy; if (sxx < 0 || syy < 0 || sxx >= sampler.SW || syy >= sampler.SH) continue;
+      const c = sampler.subClass[syy*sampler.SW + sxx]; n++;
+      if (c === CLS.WATER) w++; else if (c === CLS.ROCKY || c === CLS.DESERT || c === CLS.SNOW || c === CLS.TUNDRA) rock++; }
+    return n && w/n > 0.5 ? 'water' : n && rock/Math.max(1, n - w) > 0.4 ? 'rock' : 'trees';
+  };
+  const borderOf = new Map(); const btype = (x, y) => { const k = sqId(x, y); if (!borderOf.has(k)) borderOf.set(k, borderType(x, y)); return borderOf.get(k); };
+  // D: the corner between four squares is filled with one filler, chosen from the squares around it
+  const cornerFiller = (cx, cy) => { const v = [[cx - 1, cy - 1], [cx, cy - 1], [cx - 1, cy], [cx, cy]]
+      .filter(([x, y]) => x >= 0 && y >= 0 && x < inp.gridW && y < inp.gridH).map(([x, y]) => btype(x, y));
+    return v.filter(t => t === 'rock').length > v.filter(t => t === 'trees').length ? 'rock' : 'trees'; };
+  // C: where a river or a cliff runs off a square through an edge with no connected map, the empty neighbour becomes an
+  // unenterable scenery map (every tile blocked), connected for looks only, so the feature visibly continues
+  const sceneryEdges = new Map();                   // neighbour sqId → [{ from, side }]
+  for (const sq of winSquares){
+    for (let side = 0; side < 4; side++){
+      if (contractOf.get(sqId(sq.x, sq.y) + ':' + side)) continue;
+      const nx = sq.x + [1, -1, 0, 0][side], ny = sq.y + [0, 0, 1, -1][side];
+      if (nx < 0 || ny < 0 || nx >= inp.gridW || ny >= inp.gridH || active.has(sqId(nx, ny)) || !inWin(nx, ny)) continue;
+      let rivers = 0, cliffs = 0;
+      for (let t = 0; t < N; t++){
+        const lx = side === 0 ? N - 1 : side === 1 ? 0 : t, ly = side === 2 ? N - 1 : side === 3 ? 0 : t, i = ri(sq.x*N + lx, sq.y*N + ly);
+        if (river[i]) rivers++; if (isCliffish(tiles[i]) || tiles[i] === TILE.STAIRS || tiles[i] === TILE.SIDE_STAIRS) cliffs++;
+      }
+      if (rivers >= 1 || cliffs >= 2){ const k = sqId(nx, ny); if (!sceneryEdges.has(k)) sceneryEdges.set(k, []);
+        sceneryEdges.get(k).push({ from:{ x:sq.x, y:sq.y }, side, why:rivers ? 'river' : 'cliff' }); }
+    }
+  }
+  const scenery = [];
+  for (const [k, list] of [...sceneryEdges.entries()].sort((p, q) => p[0] - q[0])){
+    const x = k % inp.gridW, y = Math.floor(k/inp.gridW), T = new Uint8Array(N*N), K = new Uint8Array(N*N), Lv = new Int16Array(N*N);
+    for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){ const i = ri(x*N + lx, y*N + ly), j = ly*N + lx; T[j] = tiles[i]; K[j] = cls[i]; Lv[j] = lev[i]; }
+    scenery.push({ x, y, N, tiles:T, cls:K, level:Lv, blocked:true, border:btype(x, y), seenFrom:list.map(e => `${e.from.x},${e.from.y} (${e.why})`) });
+  }
+
   const results = [];
   const sBorder = seeds.layer('border'), sRag = seeds.layer('ragged'), sGrass = seeds.layer('grass'), sGrass2 = seeds.layer('grass2');
   // tall grass share at a tile: NDVI (or a per-class guess) scaled into the class's maximum; position-keyed placement
@@ -668,23 +789,30 @@ function generate(inp){
   };
   for (const sq of winSquares){
     const sx = sq.x, sy = sq.y, id = sqId(sx, sy), sLog = [], wild = wildSet.has(id);
-    const T = new Uint8Array(N*N), K = new Uint8Array(N*N), L = new Int16Array(N*N), F = new Uint8Array(N*N), RV = new Uint8Array(N*N);
+    const T = new Uint8Array(N*N), K = new Uint8Array(N*N), L = new Int16Array(N*N), F = new Uint8Array(N*N), RV = new Uint8Array(N*N), CN = new Uint8Array(N*N);
     const protectedMask = new Uint8Array(N*N), trail = new Uint8Array(N*N);   // trail: the main route (path tiles, or natural ground in wild squares)
     for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
       const i = ri(sx*N + lx, sy*N + ly), j = ly*N + lx;
-      T[j] = tiles[i]; K[j] = cls[i]; L[j] = lev[i]; F[j] = face[i]; RV[j] = river[i];
+      T[j] = tiles[i]; K[j] = cls[i]; L[j] = lev[i]; F[j] = face[i]; RV[j] = river[i]; CN[j] = corner[i];
     }
     const inBand = (lx, ly) => lx < BAND || ly < BAND || lx >= N - BAND || ly >= N - BAND;
     const wallFor = i => (K[i] === CLS.DESERT || K[i] === CLS.TUNDRA || K[i] === CLS.SNOW || K[i] === CLS.ROCKY) ? TILE.ROCK : TILE.TREE;
+    const border = btype(sx, sy), borderWall = border === 'trees' ? TILE.TREE : TILE.ROCK;
+    const sceneryLinks = [];
     const ports = [];
     for (let side = 0; side < 4; side++){
       const k = contractOf.get(id + ':' + side);
       const cell = (d, t) => side <= 1 ? { lx:side === 0 ? N - 1 - d : d, ly:t } : { lx:t, ly:side === 2 ? N - 1 - d : d };
-      if (!k){                                     // unlinked edge: a wavy 2–5-tile border of trees or rock
+      if (!k){                                     // unlinked edge: a wavy 2–5-tile border in the square's border filler
+        const nx = sx + [1, -1, 0, 0][side], ny = sy + [0, 0, 1, -1][side];
+        if (sceneryEdges.has(sqId(nx, ny)) && sceneryEdges.get(sqId(nx, ny)).some(e => e.from.x === sx && e.from.y === sy))
+          sceneryLinks.push({ direction:['right', 'left', 'down', 'up'][side], to:{ x:nx, y:ny }, offset:0, scenery:true });
         for (let t = 0; t < N; t++){
           const along = side <= 1 ? sy*N + t : sx*N + t, line = side === 0 ? sx + 1 : side === 1 ? sx : side === 2 ? sy + 1 : sy;
           const th = CONTENT.border[0] + Math.floor((CONTENT.border[1] - CONTENT.border[0] + 0.999)*smoothNoise(hash32(sBorder, line, side <= 1 ? 1 : 2), along, 0, 5));
-          for (let d = 0; d < th; d++){ const { lx, ly } = cell(d, t), i = ly*N + lx; if (T[i] !== TILE.WATER) T[i] = wallFor(i); }
+          for (let d = 0; d < th; d++){ const { lx, ly } = cell(d, t), i = ly*N + lx;
+            if (T[i] === TILE.WATER){ if (RV[i]) T[i] = TILE.ROCK; }          // rocks in the river: nothing leaves this way
+            else T[i] = borderWall; }
         }
         continue;
       }
@@ -696,7 +824,11 @@ function generate(inp){
           if (a < 0 || a >= N) continue;
           const { lx, ly } = cell(d, a), i = ly*N + lx, isPath = a >= k.pos - k.lo && a <= k.pos + k.hi;
           if (T[i] === TILE.WATER){ if (isPath && a >= k.pos - 1 && a <= k.pos + 1 && RV[i]) { T[i] = TILE.BRIDGE; trail[i] = 1; } }
-          else if (isCliffish(T[i]) || T[i] === TILE.STAIRS || T[i] === TILE.SIDE_STAIRS){ if (isPath){ T[i] = stairsFor(F[i]); trail[i] = 1; } }
+          else if (isCliffish(T[i]) || T[i] === TILE.STAIRS || T[i] === TILE.SIDE_STAIRS){
+            const across = side <= 1 ? (F[i] === FACE.E || F[i] === FACE.W) : (F[i] === FACE.N || F[i] === FACE.S);
+            if (isPath && across){ T[i] = stairsFor(F[i]); trail[i] = 1; }
+            else if (isPath){ T[i] = k.wild ? TILE.OPEN : TILE.PATH; trail[i] = 1; }   // rare: a cliff along the approach is levelled so the seam stays open
+          }
           else if (isPath){ T[i] = k.wild ? TILE.OPEN : TILE.PATH; trail[i] = 1; }
           else T[i] = TILE.VERGE;
           if (d < BAND) protectedMask[i] = 1;
@@ -706,6 +838,15 @@ function generate(inp){
                    neighbour:k.a.x === sx && k.a.y === sy ? k.b : k.a });
     }
     for (let i = 0; i < N*N; i++) if (inBand(i % N, (i/N) | 0)) protectedMask[i] = 1;
+    // D: corner tips (the diagonal neighbour is never drawn by the engine) blend into one shared filler
+    for (const [cx, cy] of [[sx, sy], [sx + 1, sy], [sx, sy + 1], [sx + 1, sy + 1]]){
+      const fill = cornerFiller(cx, cy) === 'rock' ? TILE.ROCK : TILE.TREE, px = cx*N, py = cy*N;
+      for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
+        const gx = sx*N + lx, gy = sy*N + ly, d = Math.hypot(gx + 0.5 - px, gy + 0.5 - py);
+        if (d > 3 + 1.5*smoothNoise(sBorder, gx, gy, 3)) continue;
+        const i = ly*N + lx; if (T[i] === TILE.WATER){ if (RV[i]) T[i] = TILE.ROCK; } else T[i] = fill;
+      }
+    }
 
     const sSq = seeds.square(sx, sy), sNoise = hash32(sSq, strHash('noise')), sWay = hash32(sSq, strHash('waypoints'));
     const rSq = mulberry32(hash32(sSq, strHash('content')));
@@ -719,6 +860,7 @@ function generate(inp){
       if (sampler.isPeak(gx, gy)) c = COST.peak;
       if (isWall(T[i])) c += 1;
       if (isCliffish(T[i])) c += COST.cliff;
+      if (CN[i]) c += COST.corner;
       const ex = sampler.elev(gx + 1, gy) - sampler.elev(gx - 1, gy), ey = sampler.elev(gx, gy + 1) - sampler.elev(gx, gy - 1);
       const slope = Math.min(1, Math.hypot(ex, ey)/(2*mpt)/0.3);
       c *= (1 + COST.slopeK*slope)*(1 + COST.noiseM*(wild ? WILD.extraNoise : 1)*smoothNoise(sNoise, gx, gy, COST.noiseScale));
@@ -825,11 +967,27 @@ function generate(inp){
         if (!inPath && !inVerge) continue;
         if (T[i] === TILE.WATER){ if (inPath && d <= 1.5 && RV[i]){ T[i] = TILE.BRIDGE; if (kind === 'main') trail[i] = 1; } continue; }
         if (T[i] === TILE.BRIDGE || T[i] === TILE.STAIRS || T[i] === TILE.SIDE_STAIRS){ if (inPath && kind === 'main') trail[i] = 1; continue; }
-        if (isCliffish(T[i])){ if (inPath){ T[i] = stairsFor(F[i]); if (kind === 'main') trail[i] = 1; } continue; }   // the verge never erases cliffs
+        if (isCliffish(T[i])) continue;              // stamps never touch cliffs; stairFlight() cuts the crossing itself
         if (inPath){
           if (kind === 'main'){ T[i] = wild ? TILE.OPEN : TILE.PATH; trail[i] = 1; }
           else if (!isPathish(T[i]) && !trail[i]) T[i] = TILE.OPEN;
         } else if (!isPathish(T[i]) && !trail[i]) T[i] = kind === 'main' ? TILE.VERGE : (isWall(T[i]) ? TILE.OPEN : T[i]);
+      }
+    };
+    // where a route's centre line meets a cliff: one straight flight across the route's width, along the cliff and
+    // through both rows of a tall face (so stairs never run along a cliff or meet diagonally)
+    const stairFlight = (cx, cy, w, kind) => {
+      const i0 = cy*N + cx; if (!isCliffish(T[i0]) || F[i0] === FACE.NONE) return;
+      const f = F[i0], ax = f === FACE.S || f === FACE.N ? 1 : 0, ay = 1 - ax;
+      const back = [[0, -1], [0, 1], [-1, 0], [1, 0]][[FACE.S, FACE.N, FACE.E, FACE.W].indexOf(f)];   // into the high side
+      const a = (w - 1) >> 1, b = w - 1 - a;
+      for (let u = -a; u <= b; u++){
+        let x = cx + ax*u, y = cy + ay*u;
+        for (let d = 0; d < 3; d++, x += back[0], y += back[1]){
+          if (!inInterior(x, y)) break; const i = y*N + x;
+          if (!(isCliffish(T[i]) || T[i] === TILE.STAIRS || T[i] === TILE.SIDE_STAIRS) || F[i] !== f) break;
+          T[i] = stairsFor(f); if (kind === 'main') trail[i] = 1;
+        }
       }
     };
     let waypointCount = 0;
@@ -846,8 +1004,8 @@ function generate(inp){
         let { p, v } = sm[i];
         const blend = (k2, dist) => { if (k2 && dist < 7){ const u = dist/7; p = k2.path*(1 - u) + p*u; v = k2.verge*(1 - u) + v*u; } };
         blend(startK, i); blend(endK, n - 1 - i);
-        if (wild){ carveDisc(q.lx, q.ly, WILD.path, WILD.verge, 'main'); return; }
-        const w = clampWidth(p, v); carveDisc(q.lx, q.ly, w.p, w.v, 'main');
+        if (wild){ carveDisc(q.lx, q.ly, WILD.path, WILD.verge, 'main'); stairFlight(q.lx, q.ly, WILD.path, 'main'); return; }
+        const w = clampWidth(p, v); carveDisc(q.lx, q.ly, w.p, w.v, 'main'); stairFlight(q.lx, q.ly, w.p, 'main');
       });
     }
     // soften the verge's outer edge: lone wall notches open up, verge tiles boxed in by walls grow back
@@ -951,7 +1109,7 @@ function generate(inp){
           if (isCliffish(T[i])) return 4; if (isWall(T[i])) return 3; return 1; };
         const pts = astar(best.from, best.to, spurCost);
         if (!pts) break;
-        for (const q of pts) carveDisc(q.lx, q.ly, type === 'gap' ? 1 : 2, 0, 'side');
+        for (const q of pts){ carveDisc(q.lx, q.ly, type === 'gap' ? 1 : 2, 0, 'side'); stairFlight(q.lx, q.ly, type === 'gap' ? 1 : 2, 'side'); }
         content.spurs[type]++;
       }
       // loops: a second, natural way between two far-apart points of the route
@@ -967,10 +1125,31 @@ function generate(inp){
           const loopCost = (lx, ly) => { const i = ly*N + lx; if (trail[i]) return 8; if (T[i] === TILE.WATER) return RV[i] ? 6 : COST.surf;
             if (isCliffish(T[i])) return 4; if (isWall(T[i])) return 2.5; return 1 + smoothNoise(sNoise, sx*N + lx + 99, sy*N + ly, 3); };
           const lp = astar(pair[0], pair[1], loopCost);
-          if (lp){ for (const q of lp) carveDisc(q.lx, q.ly, 2, 0, 'side'); content.loops++; }
+          if (lp){ for (const q of lp){ carveDisc(q.lx, q.ly, 2, 0, 'side'); stairFlight(q.lx, q.ly, 2, 'side'); } content.loops++; }
         }
       }
     }
+    // knight's-move rule: stair flights on different cliffs may not touch diagonally (the cliff needs room to turn).
+    // An off-route stair tile in a diagonal clash goes back to cliff; if both are on the route, the gap between them
+    // is filled with stairs so they become one flight.
+    for (let pass = 0; pass < 4; pass++){
+      const fl = new Int16Array(N*N).fill(-1); let nf = 0; const isSt = t => t === TILE.STAIRS || t === TILE.SIDE_STAIRS;
+      for (let i0 = 0; i0 < N*N; i0++){ if (!isSt(T[i0]) || fl[i0] >= 0) continue; const q = [i0]; fl[i0] = nf;
+        while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+            const ni = ny*N + nx; if (isSt(T[ni]) && fl[ni] < 0){ fl[ni] = nf; q.push(ni); } } }
+        nf++; }
+      let fixed = 0;
+      for (let i = 0; i < N*N; i++){ if (fl[i] < 0) continue; const x = i % N, y = (i/N) | 0;
+        for (const [dx, dy] of [[1, 1], [-1, 1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+          const j = ny*N + nx; if (fl[j] < 0 || fl[j] === fl[i] || !isSt(T[i]) || !isSt(T[j])) continue;
+          const victim = !trail[j] ? j : !trail[i] ? i : -1;
+          if (victim >= 0 && !protectedMask[victim]){ T[victim] = F[victim] !== FACE.NONE ? TILE.CLIFF : TILE.ROCK; fixed++; }
+          else for (const k2 of [y*N + nx, ny*N + x]) if (isCliffish(T[k2]) && !protectedMask[k2]){ T[k2] = stairsFor(F[k2]); fixed++; }
+        } }
+      if (!fixed) break;
+    }
+
     // tall grass (long grass in wetland) on open ground and verges, off the route; position-keyed so seams match
     for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
       const i = ly*N + lx; if (trail[i] || (T[i] !== TILE.OPEN && T[i] !== TILE.VERGE)) continue;
@@ -995,7 +1174,7 @@ function generate(inp){
           const d = Math.abs(x - m.gate.lx) + Math.abs(y - m.gate.ly); if (d < bd){ bd = d; target = { lx:x, ly:y }; } }
         if (!target) target = required[0].gate;
         const pts = astar(m.gate, target, repairCost);
-        if (pts){ for (const q of pts) carveDisc(q.lx, q.ly, 3, 0, 'main'); repairs++; sLog.push(`repair ${repairs}: carved a 3-wide corridor from ${m.name} (${pts.length} tiles)`); }
+        if (pts){ for (const q of pts){ carveDisc(q.lx, q.ly, 3, 0, 'main'); stairFlight(q.lx, q.ly, 3, 'main'); } repairs++; sLog.push(`repair ${repairs}: carved a 3-wide corridor from ${m.name} (${pts.length} tiles)`); }
       }
     }
     if (!ok() && required.length > 1){
@@ -1036,12 +1215,32 @@ function generate(inp){
       if (LEDGE_DIR[t]) ledges++; if (t === TILE.STAIRS || t === TILE.SIDE_STAIRS) stairs++; if (t === TILE.CLIFF) cliffs++; if (t === TILE.BRIDGE) bridges++;
     }
     content.pockets = content.pockets.filter(p => fw && fw[p.ly*N + p.lx]).length + ' reachable of ' + content.pockets.length;
+    // stair looks: each connected flight gets one style (so different colours never touch); flights in the seam band
+    // use the shared General tiles (stone); others take the style of the land cover around them
+    const stairStyle = new Uint8Array(N*N), flightOf = new Int16Array(N*N).fill(-1), isSt = t => t === TILE.STAIRS || t === TILE.SIDE_STAIRS;
+    let flights = 0, diagStairConflicts = 0;
+    for (let i0 = 0; i0 < N*N; i0++){
+      if (!isSt(T[i0]) || flightOf[i0] >= 0) continue;
+      const list = [i0], q = [i0]; flightOf[i0] = flights;
+      while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0;
+        for (const [dx, dy] of DIRS){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue; const ni = ny*N + nx;
+          if (isSt(T[ni]) && flightOf[ni] < 0){ flightOf[ni] = flights; list.push(ni); q.push(ni); } } }
+      let style = 'stone';
+      if (!list.some(i => protectedMask[i])){ const cnt = {};
+        for (const i of list){ const st = (CROSSING[K[i]] || { style:'stone' }).style; cnt[st] = (cnt[st] || 0) + 1; }
+        style = Object.keys(cnt).sort((p, q) => cnt[q] - cnt[p] || (p < q ? -1 : 1))[0]; }
+      for (const i of list) stairStyle[i] = STAIR_STYLES.indexOf(style);
+      flights++;
+    }
+    for (let i = 0; i < N*N; i++){ if (flightOf[i] < 0) continue; const x = i % N, y = (i/N) | 0;   // knight's-move check
+      for (const [dx, dy] of [[1, 1], [-1, 1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const j = ny*N + nx; if (flightOf[j] >= 0 && flightOf[j] !== flightOf[i]) diagStairConflicts++; } }
     let lmin = Infinity, lmax = -Infinity; for (let i = 0; i < N*N; i++) if (T[i] !== TILE.WATER){ lmin = Math.min(lmin, L[i]); lmax = Math.max(lmax, L[i]); }
-    results.push({ x:sx, y:sy, N, wild, tiles:T, cls:K, level:L, trail, protectedMask, ports, junction, junctionSource, bridges, repairs, fallback,
+    results.push({ x:sx, y:sy, N, wild, border, stairStyle, flights, diagStairConflicts, tiles:T, cls:K, level:L, trail, protectedMask, ports, junction, junctionSource, bridges, repairs, fallback,
                    unreachable, traps, trapFixes, needsSurf, waypoints:waypointCount, ledges, stairs, cliffs, content,
                    levels:isFinite(lmin) ? lmax - lmin + 1 : 0, offPathShare:reach && required.length ? (reach - onPath)/reach : null, grassShare:reach ? grass/reach : 0,
                    ndvi:inp.ndvi ? 'NDVI' : 'estimated from land cover',
-                   log:sLog, connections:ports.map(p => ({ direction:['right', 'left', 'down', 'up'][p.side], to:p.neighbour, offset:0 })) });
+                   log:sLog, connections:[...ports.map(p => ({ direction:['right', 'left', 'down', 'up'][p.side], to:p.neighbour, offset:0 })), ...sceneryLinks] });
   }
 
   // --- Region-wide checks ---
@@ -1064,6 +1263,7 @@ function generate(inp){
   }
   const reciprocal = [];
   for (const r of results) for (const c of r.connections){
+    if (c.scenery) continue;                       // scenery maps are look-only: never entered, so no way back is needed
     const o = bySq.get(sqId(c.to.x, c.to.y)); if (!o) continue;
     if (!o.connections.some(oc => oc.to.x === r.x && oc.to.y === r.y)) reciprocal.push(`${r.x},${r.y} → ${c.to.x},${c.to.y} has no return connection`);
   }
@@ -1087,10 +1287,14 @@ function generate(inp){
     wild:results.filter(r => r.wild).map(r => `${r.x},${r.y}`),
     spursGap:results.reduce((s, r) => s + r.content.spurs.gap, 0), spursTrail:results.reduce((s, r) => s + r.content.spurs.trail, 0),
     loops:results.reduce((s, r) => s + r.content.loops, 0), ponds:results.reduce((s, r) => s + r.content.ponds, 0),
-    thicketTiles:results.reduce((s, r) => s + r.content.thicketTiles, 0), grassSource:inp.ndvi ? 'NDVI' : 'land cover estimate'
+    thicketTiles:results.reduce((s, r) => s + r.content.thicketTiles, 0), grassSource:inp.ndvi ? 'NDVI' : 'land cover estimate',
+    terraceBlock:B, cliffRuns:runStats.runs, stairFlights:results.reduce((s, r) => s + r.flights, 0),
+    diagStairConflicts:results.reduce((s, r) => s + r.diagStairConflicts, 0),
+    scenery:scenery.map(s2 => `${s2.x},${s2.y} (seen from ${s2.seenFrom.join(', ')})`),
+    borders:results.map(r => `${r.x},${r.y}:${r.border}`)
   };
   report.ok = !seamIssues.length && !reciprocal.length && !report.unreachable.length && !report.traps;
-  return { version, N, band:BAND, window:win, squares:results, contracts, report, log };
+  return { version, N, band:BAND, window:win, squares:results, scenery, contracts, report, log };
 }
 
 // ----- Preview colours (RGBA image of the window; inactive squares are dimmed; higher levels are lighter) -----
@@ -1102,6 +1306,8 @@ const COLORS = {
 };
 // walkability view: walk / wall / surf / ledge
 const WALK_COLORS = { walk:[206, 232, 176], wall:[58, 60, 72], surf:[72, 160, 224], ledge:[240, 150, 40] };
+const STAIR_COLORS = [null, [214, 214, 222], [196, 146, 96], [240, 214, 156], [236, 244, 255]];   // stone, dirt, sand, snow
+const BORDER_COLORS = { trees:[[34, 96, 48], [46, 118, 58]], rock:[[120, 96, 74], [140, 114, 88]], water:[[60, 140, 210], [84, 164, 228]] };
 const walkClass = t => LEDGE_DIR[t] ? 'ledge' : t === TILE.WATER ? 'surf' : WALKABLE[t] ? 'walk' : 'wall';
 const OPEN_TINT = { [CLS.DESERT]:[228, 208, 152], [CLS.SNOW]:[232, 240, 248], [CLS.TUNDRA]:[180, 188, 156], [CLS.WETLAND]:[112, 176, 144],
   [CLS.CROP]:[200, 204, 96], [CLS.URBAN]:[176, 172, 180], [CLS.DRY]:[168, 200, 96], [CLS.ROCKY]:[176, 160, 128] };
@@ -1116,18 +1322,36 @@ function toRGBA(res, opts = {}){
   const put = (x, y, c) => { const o = (y*W + x)*4; img[o] = c[0]; img[o + 1] = c[1]; img[o + 2] = c[2]; };
   const mul = (c, k) => [c[0]*k, c[1]*k, c[2]*k];
   const LIP = [70, 52, 40];
+  // border blocks: what the engine shows beyond an edge with no connected map (within the 7 tiles the camera can see)
+  const drawn = new Set([...res.squares, ...(res.scenery || [])].map(q => q.x + ',' + q.y));
   for (const s of res.squares){
+    const pal = BORDER_COLORS[s.border || 'trees'];
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){
+      const nx = s.x + dx, ny = s.y + dy;
+      if (drawn.has(nx + ',' + ny) || nx < res.window.x0 || ny < res.window.y0 || nx >= res.window.x0 + res.window.w || ny >= res.window.y0 + res.window.h) continue;
+      const ox = (nx - res.window.x0)*N, oy = (ny - res.window.y0)*N;
+      for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
+        const dist = dx === 1 ? lx : dx === -1 ? N - 1 - lx : dy === 1 ? ly : N - 1 - ly;
+        if (dist >= BAND) continue;
+        const c = pal[((lx >> 1) + (ly >> 1)) & 1];
+        for (let py = 0; py < S; py++) for (let px = 0; px < S; px++) put((ox + lx)*S + px, (oy + ly)*S + py, opts.mode === 'walk' ? WALK_COLORS.wall : c);
+      }
+    }
+  }
+  for (const s of [...res.squares, ...(res.scenery || [])]){
     const ox = (s.x - res.window.x0)*N, oy = (s.y - res.window.y0)*N;
     let lmin = Infinity; for (let i = 0; i < N*N; i++) lmin = Math.min(lmin, s.level[i]);
     for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
       const i = ly*N + lx, t = s.tiles[i];
       const walkMode = opts.mode === 'walk';
       let c = COLORS[t]; if ((t === TILE.OPEN || t === TILE.VERGE) && OPEN_TINT[s.cls[i]]) c = OPEN_TINT[s.cls[i]].map((v, k) => t === TILE.VERGE ? (v + COLORS[TILE.VERGE][k])/2 : v);
-      if (t === TILE.OPEN && s.trail[i]) c = c.map((v, k) => v*0.7 + COLORS[TILE.PATH][k]*0.3);   // a wild square's unmarked trail
-      if (walkMode) c = WALK_COLORS[walkClass(t)];
+      if (t === TILE.OPEN && s.trail && s.trail[i]) c = c.map((v, k) => v*0.7 + COLORS[TILE.PATH][k]*0.3);   // a wild square's unmarked trail
+      if ((t === TILE.STAIRS || t === TILE.SIDE_STAIRS) && s.stairStyle && s.stairStyle[i]) c = STAIR_COLORS[s.stairStyle[i]];
+      if (s.blocked) c = c.map(v => v*0.55 + 30);   // scenery map: look-only, every tile blocked
+      if (walkMode) c = s.blocked ? WALK_COLORS.wall : WALK_COLORS[walkClass(t)];
       // gentle shading by terrace level; paths, stairs and bridges stay unshaded so the route always reads clearly
       let k = walkMode || t === TILE.WATER || isPathish(t) ? 1 : Math.min(1.1, 0.86 + 0.06*(s.level[i] - lmin));
-      if (opts.showBand && s.protectedMask[i] && !isPathish(t) && t !== TILE.VERGE) k *= 0.85;
+      if (opts.showBand && s.protectedMask && s.protectedMask[i] && !isPathish(t) && t !== TILE.VERGE) k *= 0.85;
       const base = mul(c, k), ld = LEDGE_DIR[t];
       for (let py = 0; py < S; py++) for (let px = 0; px < S; px++){
         let col = base;
@@ -1139,6 +1363,7 @@ function toRGBA(res, opts = {}){
             if (along >= S - Math.max(1, Math.round(S/4))) col = LIP;            // the lip you jump over
             else if (along >= Math.round(S/4) && Math.abs(across - m) <= (S - 1 - along - Math.round(S/4))*0.6 && along < S - Math.round(S/4)) col = mul(base, 0.6);  // arrow
           } else if (walkMode) col = base;
+          else if (s.blocked && (px + py) % 4 === 0) col = mul(base, 0.75);
           else if (t === TILE.STAIRS) col = py % 2 ? mul(base, 0.72) : base;
           else if (t === TILE.TALL_GRASS || t === TILE.LONG_GRASS) col = (px % 2 === 0 && py % 3 !== 2) ? mul(base, 0.72) : base;
           else if (t === TILE.SIDE_STAIRS) col = px % 2 ? mul(base, 0.72) : base;
@@ -1159,10 +1384,12 @@ function toRGBA(res, opts = {}){
 function describeAt(res, px, py, scale){
   const N = res.N, S = scale || 1, gx = Math.floor(px/S), gy = Math.floor(py/S);
   const sx = res.window.x0 + Math.floor(gx/N), sy = res.window.y0 + Math.floor(gy/N), lx = gx % N, ly = gy % N;
-  const sq = res.squares.find(q => q.x === sx && q.y === sy);
-  if (!sq) return `square ${sx},${sy}: no route or town`;
+  const sq = res.squares.find(q => q.x === sx && q.y === sy), sc = (res.scenery || []).find(q => q.x === sx && q.y === sy);
+  if (sc) return `square ${sx},${sy}: scenery map (look-only, nothing walkable) · ${TILE_NAMES[sc.tiles[(gy % N)*N + gx % N]]}`;
+  if (!sq) return `square ${sx},${sy}: no route or town (border blocks shown where the camera would see them)`;
   const i = ly*N + lx;
-  return `square ${sx},${sy}${sq.wild ? ' (wild)' : ''} · tile ${lx},${ly} · ${TILE_NAMES[sq.tiles[i]]}${sq.trail[i] ? ' · main route' : ''} · level ${sq.level[i]}${sq.protectedMask[i] ? ' · seam band' : ''}`;
+  const st = (sq.tiles[i] === TILE.STAIRS || sq.tiles[i] === TILE.SIDE_STAIRS) && sq.stairStyle[i] ? ` (${STAIR_STYLES[sq.stairStyle[i]]})` : '';
+  return `square ${sx},${sy}${sq.wild ? ' (wild)' : ''} · border ${sq.border} · tile ${lx},${ly} · ${TILE_NAMES[sq.tiles[i]]}${st}${sq.trail[i] ? ' · main route' : ''} · level ${sq.level[i]}${sq.protectedMask[i] ? ' · seam band' : ''}`;
 }
 
 const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, WILD, CONTENT, generate, toRGBA, describeAt, makeSeeds, hash32, mulberry32 };
@@ -4688,6 +4915,7 @@ function showOverworld(){
     box.style.cssText = 'position:fixed;inset:4vh 4vw;z-index:9999;background:#1c2440;border:3px solid #000;border-radius:8px;padding:10px;overflow:auto;color:#e8ecf8;font:12px monospace';
     box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-family:'Press Start 2P',monospace;font-size:10px">OVERWORLD 3×3 (PROTOTYPE)</b>
+        <label>terrace blocks <select id="owBlock"><option value="4" selected>4×4</option><option value="3">3×3</option></select></label>
         <label>view <select id="owMode"><option value="terrain" selected>terrain</option><option value="walk">walkability</option></select></label>
         <label><input type="checkbox" id="owSeams" checked> seams</label>
         <label><input type="checkbox" id="owBand"> seam bands</label>
@@ -4698,21 +4926,23 @@ function showOverworld(){
       <pre id="owReport" style="white-space:pre-wrap;margin-top:6px"></pre>`;
     document.body.appendChild(box);
     $('owClose').onclick = () => box.remove();
-    for (const id of ['owMode', 'owSeams', 'owBand']) $(id).onchange = drawOverworld;
+    for (const id of ['owMode', 'owSeams', 'owBand', 'owBlock']) $(id).onchange = drawOverworld;
   }
   drawOverworld();
 }
 function drawOverworld(){
   const t0 = performance.now();
   let res;
-  try { res = OverworldGen.generate(overworldInput(overworldCenter())); }
+  try { res = OverworldGen.generate({ ...overworldInput(overworldCenter()), terraceBlock:+$('owBlock').value }); }
   catch (e){ $('owReport').textContent = 'Generation failed: ' + e.message; return; }
   $('owKey').innerHTML = $('owMode').value === 'walk'
     ? 'Key: <span style="color:#cee8b0">■</span> walk <span style="color:#3a3c48">■</span> wall <span style="color:#48a0e0">■</span> surf <span style="color:#f09628">■</span> ledge (one-way) · dark squares have no route or town'
     : `Key: <span style="color:#e8b060">■</span> path <span style="color:#a4dc6e">■</span> verge <span style="color:#78c850">■</span> open ground
        <span style="color:#389640">■</span> tall grass <span style="color:#288060">■</span> long grass (no running) <span style="color:#287038">■</span> trees <span style="color:#96785a">■</span> rock
        <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge <span style="color:#604e46">■</span> cliff
-       <span style="color:#c4a870">■</span> ledge: dark lip + arrow toward the jump side · <span style="color:#faf6ec">■</span> stairs: striped across the climb
+       <span style="color:#c4a870">■</span> ledge: dark lip + arrow toward the jump side · stairs, striped across the climb:
+       <span style="color:#d6d6de">■</span> stone <span style="color:#c49260">■</span> dirt <span style="color:#f0d69c">■</span> sand <span style="color:#ecf4ff">■</span> snow
+       · hatched = scenery map (look-only) · checkered strips = border blocks
        · lighter ground is higher · wild squares show their route as faintly tinted ground · dark squares have no route or town`;
   const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked, scale:6, mode:$('owMode').value });
   const cv = $('owCanvas'), k = Math.max(0.5, Math.min(2, Math.min(innerWidth*0.85, innerHeight*0.7)/img.width));
@@ -4729,6 +4959,7 @@ function drawOverworld(){
     `Repairs: ${r.repairs} · fallbacks: ${r.fallbacks} · first-pass reachable: ${r.firstPassReachable}/${r.squares} · connected groups: ${r.components}`,
     `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.ledgeTiles} ledge and ${r.stairTiles} stair tiles · ${r.trapFixes} ledge tile(s) made two-way so nothing traps you`,
     `Exploration: ${r.waypoints} waypoint(s) · ${Math.round(r.offPathShare*100)}% of reachable ground is off the path (target 80%)${r.needSurf.length ? ' · needs Surf: ' + r.needSurf.join(' ') : ''}`,
+    `Terraces: ${r.terraceBlock}×${r.terraceBlock} blocks · ${r.cliffRuns} straight cliff runs · ${r.stairFlights} stair flights · knight's-move conflicts: ${r.diagStairConflicts}${r.scenery.length ? ' · scenery maps: ' + r.scenery.join('; ') : ''}`,
     `Off-path content: ${r.spursGap} hidden gap(s) and ${r.spursTrail} side trail(s) · ${r.loops} loop(s) · ${r.ponds} pond(s) · ${r.thicketTiles} thicket tiles · tall grass ${Math.round(r.grassShare*100)}% of reachable ground (${r.grassSource})${r.wild.length ? ' · wild squares: ' + r.wild.join(' ') : ''}`,
     ...res.contracts.map(c => `Edge ${c.a.x},${c.a.y}↔${c.b.x},${c.b.y}: port ${c.pos}, path ${c.path}, verge ${c.verge} (${c.source === 'road' ? 'real road' : 'seeded'})${c.notes.length ? ' — ' + [...new Set(c.notes)].join('; ') : ''}`),
     ...res.squares.filter(s => s.log.length).map(s => `Square ${s.x},${s.y}: ${s.log.join('; ')}`),

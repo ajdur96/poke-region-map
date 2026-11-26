@@ -45,8 +45,8 @@ const failures = [];
 const check = (cond, msg) => { if (!cond) failures.push(msg); console.log((cond ? 'PASS ' : 'FAIL ') + msg); };
 const digest = res => res.squares.map(s => `${s.x},${s.y}:` + OG.hash32(...s.tiles)).join('|');
 
-for (const N of [36]){
-  const base = { ...region, seed:12345, N, window:{ x0:1, y0:1, w:3, h:3 } };
+for (const [N, block] of [[36, 4], [36, 3]]){
+  const base = { ...region, seed:12345, N, terraceBlock:block, window:{ x0:1, y0:1, w:3, h:3 } };
   const t0 = Date.now(); const res = OG.generate(base); const ms = Date.now() - t0;
   const res2 = OG.generate(base);
   console.log(`\n== N=${N}: ${res.squares.length} squares, ${res.contracts.length} contracts, ${ms} ms`);
@@ -63,6 +63,17 @@ for (const N of [36]){
   check(res.report.unreachable.length === 0, `N=${N}: every port and junction reachable`);
   check(res.report.components === 1, `N=${N}: window's map graph is connected`);
   check(res.report.traps === 0, `N=${N}: no ledge traps (everywhere reachable can get back)`);
+  check(res.report.diagStairConflicts === 0, `N=${N} block ${block}: no stair flights diagonal to each other`);
+  check(res.scenery.every(sc => sc.blocked), `N=${N} block ${block}: scenery maps are fully blocked (${res.scenery.length})`);
+  // ledges only on straight runs: every ledge tile's neighbours along the run are ledge or cliff of the same facing
+  let badLedge = 0;
+  for (const sq of res.squares) for (let i = 0; i < N*N; i++){
+    const t = sq.tiles[i]; if (t < OG.TILE.LEDGE_S || t > OG.TILE.LEDGE_W) continue;
+    const x = i % N, y = (i/N) | 0, horiz = t === OG.TILE.LEDGE_S;
+    for (const d of [-1, 1]){ const nx = horiz ? x + d : x, ny = horiz ? y : y + d; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      const u = sq.tiles[ny*N + nx]; if (u !== t && u !== OG.TILE.CLIFF && u !== OG.TILE.STAIRS && u !== OG.TILE.SIDE_STAIRS && u !== OG.TILE.PATH && u !== OG.TILE.VERGE && u !== OG.TILE.OPEN && u !== OG.TILE.TREE && u !== OG.TILE.ROCK) badLedge++; }
+  }
+  check(badLedge === 0, `N=${N} block ${block}: ledges sit on straight runs`);
   // band rule: inside the 7-tile band, only straight approaches (path/verge/bridge) or base terrain — the band at
   // each port must be exactly the contract width on both sides
   for (const k of res.contracts){
@@ -82,8 +93,8 @@ for (const N of [36]){
   check(digest(other) !== digest(res), `N=${N}: a different seed gives a different realization`);
 
   const img = OG.toRGBA(res, { showSeams:true });
-  fs.writeFileSync(path.join(outDir, `preview_${N}.rgba`), Buffer.from(img.data.buffer));
-  fs.writeFileSync(path.join(outDir, `preview_${N}.json`), JSON.stringify({ width:img.width, height:img.height, report:res.report }, null, 1));
+  fs.writeFileSync(path.join(outDir, `preview_${N}_${block}.rgba`), Buffer.from(img.data.buffer));
+  fs.writeFileSync(path.join(outDir, `preview_${N}_${block}.json`), JSON.stringify({ width:img.width, height:img.height, report:res.report }, null, 1));
 }
 console.log(failures.length ? `\n${failures.length} FAILED` : '\nALL PASSED');
 process.exitCode = failures.length ? 1 : 0;
