@@ -3663,11 +3663,13 @@ function showOverworld(){
         <label><input type="checkbox" id="owSeams" checked> seams</label>
         <label><input type="checkbox" id="owBand"> seam bands</label>
         <button id="owClose">CLOSE</button></div>
-      <canvas id="owCanvas" style="image-rendering:pixelated;max-width:100%;border:2px solid #000"></canvas>
+      <canvas id="owCanvas" style="image-rendering:pixelated;max-width:100%;border:2px solid #000;cursor:crosshair"></canvas>
+      <div id="owHover" style="margin-top:4px;color:#ffd76a">Hover (or tap) the map to see what each tile is.</div>
       <div style="margin-top:6px">Key: <span style="color:#e8b060">■</span> path <span style="color:#a4dc6e">■</span> verge
         <span style="color:#78c850">■</span> open ground <span style="color:#287038">■</span> trees <span style="color:#96785a">■</span> rock
         <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge <span style="color:#604e46">■</span> cliff
-        <span style="color:#c4a870">■</span> ledge (one-way) <span style="color:#faf6ec">■</span> stairs · lighter ground is higher · dark squares have no route or town</div>
+        <span style="color:#c4a870">■</span> ledge: dark lip + arrow on the side you jump toward (one-way) · <span style="color:#faf6ec">■</span> stairs: striped across the climb (side stairs striped the other way)
+        · lighter ground is higher · dark squares have no route or town</div>
       <pre id="owReport" style="white-space:pre-wrap;margin-top:6px"></pre>`;
     document.body.appendChild(box);
     $('owClose').onclick = () => box.remove();
@@ -3680,9 +3682,13 @@ function drawOverworld(){
   let res;
   try { res = OverworldGen.generate(overworldInput(N, overworldCenter())); }
   catch (e){ $('owReport').textContent = 'Generation failed: ' + e.message; return; }
-  const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked });
-  const cv = $('owCanvas'), k = Math.max(2, Math.floor(Math.min(innerWidth*0.85, innerHeight*0.6)/img.width));
-  cv.width = img.width; cv.height = img.height; cv.style.width = img.width*k + 'px';
+  const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked, scale:6 });
+  const cv = $('owCanvas'), k = Math.max(0.5, Math.min(2, Math.min(innerWidth*0.85, innerHeight*0.7)/img.width));
+  cv.width = img.width; cv.height = img.height; cv.style.width = Math.round(img.width*k) + 'px';
+  cv.onmousemove = e => { const b = cv.getBoundingClientRect();
+    $('owHover').textContent = OverworldGen.describeAt(res, (e.clientX - b.left)*cv.width/b.width, (e.clientY - b.top)*cv.height/b.height, img.scale); };
+  cv.onmouseleave = () => { $('owHover').textContent = 'Hover (or tap) the map to see what each tile is.'; };
+  cv.onclick = cv.onmousemove;
   cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
   const r = res.report, lines = [
     `${r.squares} map(s), ${r.contracts} edge contract(s), ${Math.round(performance.now() - t0)} ms · seed ${r.seed} · ${r.version}`,

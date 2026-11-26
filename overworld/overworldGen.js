@@ -708,9 +708,17 @@ const COLORS = {
 };
 const OPEN_TINT = { [CLS.DESERT]:[228, 208, 152], [CLS.SNOW]:[232, 240, 248], [CLS.TUNDRA]:[180, 188, 156], [CLS.WETLAND]:[112, 176, 144],
   [CLS.CROP]:[200, 204, 96], [CLS.URBAN]:[176, 172, 180], [CLS.DRY]:[168, 200, 96], [CLS.ROCKY]:[176, 160, 128] };
+// opts.scale = pixels per tile. At 4 or more, tiles get glyphs: ledges show a dark lip and an arrow on the side you
+// jump toward, stairs are striped across the climb (side stairs striped the other way), cliffs have a light top edge,
+// bridges show planks, trees a dark rim.
+const TILE_NAMES = ['open ground', 'path', 'verge', 'trees', 'rock', 'water', 'bridge', 'cliff',
+  'ledge (jump south)', 'ledge (jump east)', 'ledge (jump west)', 'stairs', 'side stairs'];
 function toRGBA(res, opts = {}){
-  const N = res.N, W = res.window.w*N, H = res.window.h*N, img = new Uint8ClampedArray(W*H*4);
+  const N = res.N, S = Math.max(1, opts.scale | 0 || 1), W = res.window.w*N*S, H = res.window.h*N*S, img = new Uint8ClampedArray(W*H*4);
   for (let i = 0; i < W*H; i++){ img[i*4] = 40; img[i*4 + 1] = 44; img[i*4 + 2] = 60; img[i*4 + 3] = 255; }
+  const put = (x, y, c) => { const o = (y*W + x)*4; img[o] = c[0]; img[o + 1] = c[1]; img[o + 2] = c[2]; };
+  const mul = (c, k) => [c[0]*k, c[1]*k, c[2]*k];
+  const LIP = [70, 52, 40];
   for (const s of res.squares){
     const ox = (s.x - res.window.x0)*N, oy = (s.y - res.window.y0)*N;
     let lmin = Infinity; for (let i = 0; i < N*N; i++) lmin = Math.min(lmin, s.level[i]);
@@ -720,17 +728,42 @@ function toRGBA(res, opts = {}){
       // gentle shading by terrace level; paths, stairs and bridges stay unshaded so the route always reads clearly
       let k = t === TILE.WATER || isPathish(t) ? 1 : Math.min(1.1, 0.86 + 0.06*(s.level[i] - lmin));
       if (opts.showBand && s.protectedMask[i] && !isPathish(t) && t !== TILE.VERGE) k *= 0.85;
-      const [r, g, b] = c.map(v => v*k);
-      const o = ((oy + ly)*W + ox + lx)*4; img[o] = r; img[o + 1] = g; img[o + 2] = b;
+      const base = mul(c, k), ld = LEDGE_DIR[t];
+      for (let py = 0; py < S; py++) for (let px = 0; px < S; px++){
+        let col = base;
+        if (S >= 4){
+          const m = (S - 1)/2;
+          if (ld){
+            const along = ld[1] ? py : ld[0] > 0 ? px : S - 1 - px;           // distance toward the jump side
+            const across = ld[1] ? px : py;
+            if (along >= S - Math.max(1, Math.round(S/4))) col = LIP;            // the lip you jump over
+            else if (along >= Math.round(S/4) && Math.abs(across - m) <= (S - 1 - along - Math.round(S/4))*0.6 && along < S - Math.round(S/4)) col = mul(base, 0.6);  // arrow
+          } else if (t === TILE.STAIRS) col = py % 2 ? mul(base, 0.72) : base;
+          else if (t === TILE.SIDE_STAIRS) col = px % 2 ? mul(base, 0.72) : base;
+          else if (t === TILE.CLIFF) col = py < Math.max(1, S/4) ? mul(base, 1.6) : base;
+          else if (t === TILE.BRIDGE) col = (px + py) % 3 === 0 ? mul(base, 0.7) : base;
+          else if (t === TILE.TREE) col = (px === 0 || py === S - 1 || px === S - 1) ? mul(base, 0.75) : base;
+        }
+        put((ox + lx)*S + px, (oy + ly)*S + py, col);
+      }
     }
   }
   if (opts.showSeams) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
-    if (x % N && y % N) continue; const o = (y*W + x)*4; img[o] = img[o]*0.6 + 102; img[o + 1] = img[o + 1]*0.6; img[o + 2] = img[o + 2]*0.6;
+    if (x % (N*S) && y % (N*S)) continue; const o = (y*W + x)*4; img[o] = img[o]*0.6 + 102; img[o + 1] = img[o + 1]*0.6; img[o + 2] = img[o + 2]*0.6;
   }
-  return { width:W, height:H, data:img };
+  return { width:W, height:H, data:img, scale:S };
+}
+// What is at a pixel of the preview (for hover tooltips)
+function describeAt(res, px, py, scale){
+  const N = res.N, S = scale || 1, gx = Math.floor(px/S), gy = Math.floor(py/S);
+  const sx = res.window.x0 + Math.floor(gx/N), sy = res.window.y0 + Math.floor(gy/N), lx = gx % N, ly = gy % N;
+  const sq = res.squares.find(q => q.x === sx && q.y === sy);
+  if (!sq) return `square ${sx},${sy}: no route or town`;
+  const i = ly*N + lx;
+  return `square ${sx},${sy} · tile ${lx},${ly} · ${TILE_NAMES[sq.tiles[i]]} · level ${sq.level[i]}${sq.protectedMask[i] ? ' · seam band' : ''}`;
 }
 
-const api = { VERSION, BAND, TILE, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, generate, toRGBA, makeSeeds, hash32, mulberry32 };
+const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, generate, toRGBA, describeAt, makeSeeds, hash32, mulberry32 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else root.OverworldGen = api;
 })(typeof self !== 'undefined' ? self : this);
