@@ -188,6 +188,7 @@
       <button id="pngRawBtn" title="Just the map, 4× size, for game assets">MAP-ONLY PNG</button>
       <button id="jsonBtn">EXPORT JSON</button>
       <button id="emeraldBtn" title="ZIP with the region map files and a script that installs them into a pokeemerald checkout">EXPORT TO POKEEMERALD</button>
+      <button id="owBtn" title="Prototype: walkable maps for a 3×3 block of squares around the selected route, town or cursor">OVERWORLD 3×3</button>
     </div>
     <div class="hint" id="toolHint"></div>
     <div class="actions">
@@ -203,6 +204,7 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="overworld/overworldGen.js"></script>
 <script>
 // ===== Grid constants =====
 // Emerald's region map is 28x15 squares of 8x8 px. Each square is split into 4x4
@@ -1115,7 +1117,7 @@ function ingestRivers(ways){
 // Trace every road through the 28x15 grid, recording which square-to-square steps a real road makes.
 function ingestRoads(ways){
   const W = { motorway:3, trunk:2.5, primary:1.5, secondary:1 };
-  const roadSq = new Float32Array(MW*MH), edges = new Set(), edgeName = new Map();
+  const roadSq = new Float32Array(MW*MH), edges = new Set(), edgeName = new Map(), lines = [];
   for (const way of ways){
     const w = W[way.tags.highway] || 1, label = way.tags.ref || way.tags.name || '';
     const addEdge = (a, b) => {                       // remember the most important named road on each step
@@ -1123,6 +1125,7 @@ function ingestRoads(ways){
       if (label){ const cur = edgeName.get(k); if (!cur || cur.w < w) edgeName.set(k, { name:label.split(';')[0].trim(), w }); }
     };
     const pts = way.geometry.map(p => toSqF(p.lat, p.lon));
+    lines.push({ w, pts:pts.map(p => ({ x:+p.x.toFixed(4), y:+p.y.toFixed(4) })) });   // kept for overworld paths
     let cur = null;
     for (let i = 0; i < pts.length-1; i++){
       const a = pts[i], b = pts[i+1], steps = Math.max(1, Math.ceil(dist(a, b)/0.25));
@@ -1142,7 +1145,7 @@ function ingestRoads(ways){
       }
     }
   }
-  state.roadSq = roadSq; state.roadEdges = edges; state.roadEdgeName = edgeName; clearPaths();
+  state.roadSq = roadSq; state.roadEdges = edges; state.roadEdgeName = edgeName; state.roadLines = lines; clearPaths();
 }
 
 // ===== Town picking =====
@@ -2551,7 +2554,7 @@ function endProgress(){ $('progress').style.display = 'none'; $('progressFill').
 function clearRegion(){
   Object.assign(state, { terrain:null, cover:null, climate:null, coast:null, elev:null, lake:null, sq:null, sqElev:null, towns:[], routes:[],
     startId:null, sel:null, linkFrom:null, river:null, riverNames:new Map(),
-    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), names:null, notes:[], timings:{}, source:null, variant:0,
+    roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), roadLines:[], names:null, notes:[], timings:{}, source:null, variant:0,
     regionName:'', regionNameCustom:false });
   clearPaths(); $('popup').style.display = 'none';
 }
@@ -3118,7 +3121,7 @@ function deserialize(o){
     regionName:o.regionName || '', regionNameCustom:!!o.regionNameCustom,
     flavor:!!o.ui?.flavor, bendy:o.ui?.bendy ?? 50,
     shared:{ elev:o.elev ? b64ToF32(o.elev) : null, river:o.river ? fromB64(o.river) : null, riverNames:new Map(o.riverNames || []),
-      roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(G.w*G.h), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []),
+      roadSq:o.roadSq ? b64ToF32(o.roadSq) : new Float32Array(G.w*G.h), roadEdges:new Set(o.roadEdges || []), roadEdgeName:new Map(o.roadEdgeName || []), roadLines:[],
       names:n ? { lake:new Map(n.lake), sea:new Map(n.sea), range:new Map(n.range), land:new Map(n.land), peaks:n.peaks } : null,
       gen:o.gen, notes:o.notes || [], timings:{},
       source:o.source ? { places:o.source.places.map(([name, lat, lon, pop, place, capital, local, rom]) => ({ name, lat, lon, pop, place, capital, local:local || undefined, romanized:!!rom })),
@@ -3147,7 +3150,7 @@ function fromLegacyExport(o){
   return {
     terrain, towns, routes:(o.routes || []).map(r => ({ a:r.from, b:r.to, name:r.name, custom:!!r.customName })),
     startId:start ? start.id : null, nextId:Math.max(0, ...towns.map(t => t.id)) + 1, seed:0, flavor:false, bendy:50, regionName:o.regionName || '',
-    shared:{ elev:null, river, riverNames:new Map(), roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(),
+    shared:{ elev:null, river, riverNames:new Map(), roadSq:new Float32Array(MW*MH), roadEdges:new Set(), roadEdgeName:new Map(), roadLines:[],
              names:null, gen, notes:['Imported from an older export: elevation, roads and feature names weren\'t saved in it.'], timings:{}, source:null }
   };
 }
@@ -3624,6 +3627,74 @@ $('jsonBtn').onclick = () => {
   out.editorState = serialize();                   // lets IMPORT JSON restore the region exactly
   download('regionMap.json', new Blob([JSON.stringify(out, null, 2)], { type:'application/json' }));
 };
+
+// ===== Overworld maps (prototype): 3×3 preview of walkable maps, one per square =====
+// Generation lives in overworld/overworldGen.js; this only gathers the region data and draws the result.
+function overworldInput(N, center){
+  const paths = routePaths(), links = [], active = [];
+  for (const p of paths) if (p) for (let i = 1; i < p.squares.length; i++) links.push({ a:p.squares[i-1], b:p.squares[i] });
+  for (const t of state.towns){                    // multi-square towns: their squares join up, and count as active
+    const f = footprint(t); f.forEach(q => active.push(q));
+    for (let i = 0; i < f.length; i++) for (let j = i+1; j < f.length; j++)
+      if (Math.abs(f[i].x - f[j].x) + Math.abs(f[i].y - f[j].y) === 1) links.push({ a:f[i], b:f[j] });
+  }
+  const x0 = Math.min(MW - 3, Math.max(0, center.x - 1)), y0 = Math.min(MH - 3, Math.max(0, center.y - 1));
+  return { seed:state.seed || 0, N, gridW:MW, gridH:MH, sub:SUB, terrain:state.terrain, cover:drawCover(), lake:state.lake,
+           river:state.river, elev:state.elev, kmPerSquare:kmPerSquare(), links, active, roads:state.roadLines || [],
+           window:{ x0, y0, w:3, h:3 } };
+}
+function overworldCenter(){
+  if (state.sel && state.sel.type === 'route' && routePaths()[state.sel.idx]){
+    const sq = routePaths()[state.sel.idx].squares; return sq[sq.length >> 1];
+  }
+  if (state.sel && state.sel.type === 'town'){ const t = townById(state.sel.id); if (t) return { x:t.x, y:t.y }; }
+  return state.cursor || { x:0, y:0 };
+}
+function showOverworld(){
+  if (!state.terrain){ setStatus('Forge a region first.'); return; }
+  if (typeof OverworldGen === 'undefined'){ setStatus('Overworld generator (overworld/overworldGen.js) did not load.'); return; }
+  let box = $('owBox');
+  if (!box){
+    box = document.createElement('div'); box.id = 'owBox';
+    box.style.cssText = 'position:fixed;inset:4vh 4vw;z-index:9999;background:#1c2440;border:3px solid #000;border-radius:8px;padding:10px;overflow:auto;color:#e8ecf8;font:12px monospace';
+    box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <b style="font-family:'Press Start 2P',monospace;font-size:10px">OVERWORLD 3×3 (PROTOTYPE)</b>
+        <label>size <select id="owN"><option value="24">24×24</option><option value="32" selected>32×32</option></select></label>
+        <label><input type="checkbox" id="owSeams" checked> seams</label>
+        <label><input type="checkbox" id="owBand"> seam bands</label>
+        <button id="owClose">CLOSE</button></div>
+      <canvas id="owCanvas" style="image-rendering:pixelated;max-width:100%;border:2px solid #000"></canvas>
+      <div style="margin-top:6px">Key: <span style="color:#dec48c">■</span> path <span style="color:#a4dc6e">■</span> verge
+        <span style="color:#78c850">■</span> open ground <span style="color:#287038">■</span> trees <span style="color:#96785a">■</span> rock
+        <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge · dark squares have no route or town</div>
+      <pre id="owReport" style="white-space:pre-wrap;margin-top:6px"></pre>`;
+    document.body.appendChild(box);
+    $('owClose').onclick = () => box.remove();
+    for (const id of ['owN', 'owSeams', 'owBand']) $(id).onchange = drawOverworld;
+  }
+  drawOverworld();
+}
+function drawOverworld(){
+  const N = +$('owN').value, t0 = performance.now();
+  let res;
+  try { res = OverworldGen.generate(overworldInput(N, overworldCenter())); }
+  catch (e){ $('owReport').textContent = 'Generation failed: ' + e.message; return; }
+  const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked });
+  const cv = $('owCanvas'), k = Math.max(2, Math.floor(Math.min(innerWidth*0.85, innerHeight*0.6)/img.width));
+  cv.width = img.width; cv.height = img.height; cv.style.width = img.width*k + 'px';
+  cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+  const r = res.report, lines = [
+    `${r.squares} map(s), ${r.contracts} edge contract(s), ${Math.round(performance.now() - t0)} ms · seed ${r.seed} · ${r.version}`,
+    r.ok ? 'Checks passed: seams match, every connection is two-way, every port and junction is reachable.' : 'CHECKS FAILED',
+    ...r.seamFailures.map(s => 'Seam: ' + s), ...r.reciprocityFailures.map(s => 'Connection: ' + s), ...r.unreachable.map(s => 'Unreachable: ' + s),
+    `Repairs: ${r.repairs} · fallbacks: ${r.fallbacks} · first-pass reachable: ${r.firstPassReachable}/${r.squares} · connected groups: ${r.components}`,
+    ...res.contracts.map(c => `Edge ${c.a.x},${c.a.y}↔${c.b.x},${c.b.y}: port ${c.pos}, path ${c.path}, verge ${c.verge} (${c.source === 'road' ? 'real road' : 'seeded'})${c.notes.length ? ' — ' + [...new Set(c.notes)].join('; ') : ''}`),
+    ...res.squares.filter(s => s.log.length).map(s => `Square ${s.x},${s.y}: ${s.log.join('; ')}`),
+    (state.roadLines || []).length ? '' : 'Note: no road geometry in memory (restored or imported region), so ports use seeded positions. Forge again to use real roads.'
+  ];
+  $('owReport').textContent = lines.filter(Boolean).join('\n');
+}
+$('owBtn').onclick = showOverworld;
 
 // ===== Slider labels + first paint =====
 $('townCount').oninput = e => $('townOut').textContent = e.target.value;
