@@ -12,7 +12,7 @@ A prototype for a Pokémon Emerald (pokeemerald decomp) ROM hack: pick any real-
 | `tools/build_demo.py` | Rebuilds the demo from `regionMapForge.html`. Run it after changing the full version. |
 | `data/ne/` | Bundled map data: roads (with route numbers), rivers, lakes, seas, mountain ranges and landforms, towns and peaks, cut into 10°×10° tiles (~11 MB for the whole world; a region loads only the tiles it touches). |
 | `tools/build_static_data.py` | Rebuilds `data/ne/` from the source datasets. |
-| `overworld/overworldGen.js` | **Prototype** overworld map generator: walkable maps, one per region-map square (24×24 or 32×32 metatiles), with matching seams, real-road ports, least-cost paths, path + verge widths from land cover, bridges, Surf crossings, and reachability checks. Runs in the browser (the **OVERWORLD 3×3** button previews the 3×3 block around the selected route, town or cursor) and in Node. Draws abstract tile classes for now; real metatiles come later. |
+| `overworld/overworldGen.js` | **Prototype** overworld map generator: walkable maps, one per region-map square (32×32 metatiles; 24×24 for comparison), with matching seams, terrain levels (cliffs, one-way ledges, stairs and side stairs), real-road ports, winding least-cost paths through seeded waypoints, path + verge widths from land cover, bridges, Surf crossings, and reachability checks. Runs in the browser (the **OVERWORLD 3×3** button previews the 3×3 block around the selected route, town or cursor) and in Node. Draws abstract tile classes for now; real metatiles come later. |
 | `overworld/testOverworld.js` | Headless tests for the generator: `node overworld/testOverworld.js` (determinism, window independence, seams, reachability). |
 
 ## Features

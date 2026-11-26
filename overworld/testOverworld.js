@@ -62,19 +62,20 @@ for (const N of [24, 32]){
   check(res.report.reciprocityFailures.length === 0, `N=${N}: every connection has a return connection`);
   check(res.report.unreachable.length === 0, `N=${N}: every port and junction reachable`);
   check(res.report.components === 1, `N=${N}: window's map graph is connected`);
+  check(res.report.traps === 0, `N=${N}: no ledge traps (everywhere reachable can get back)`);
   // band rule: inside the 7-tile band, only straight approaches (path/verge/bridge) or base terrain — the band at
   // each port must be exactly the contract width on both sides
   for (const k of res.contracts){
     const A = res.squares.find(s => s.x === k.a.x && s.y === k.a.y), B = res.squares.find(s => s.x === k.b.x && s.y === k.b.y);
     if (!A || !B) continue;
     let same = true;
-    for (let d = 0; d < OG.BAND; d++) for (let t = 0; t < N; t++){
+    for (let d = 0; d < OG.BAND; d++) for (let t = k.pos - k.lo - k.verge; t <= k.pos + k.hi + k.verge; t++){
       const ia = k.horiz ? t*N + (N - 1 - d) : (N - 1 - d)*N + t, ib = k.horiz ? t*N + d : d*N + t;
-      const isWay = t => t === OG.TILE.PATH || t === OG.TILE.BRIDGE;
+      const isWay = t => t === OG.TILE.PATH || t === OG.TILE.BRIDGE || t === OG.TILE.STAIRS || t === OG.TILE.SIDE_STAIRS;
       const pa = isWay(A.tiles[ia]), pb = isWay(B.tiles[ib]);
       if (pa !== pb) same = false;
     }
-    check(same, `N=${N}: seam strip ${k.key} path tiles mirror exactly across the edge`);
+    check(same, `N=${N}: seam approach ${k.key} path tiles mirror exactly across the edge`);
   }
   // different seed → different result
   const other = OG.generate({ ...base, seed:999 });

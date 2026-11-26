@@ -3664,9 +3664,10 @@ function showOverworld(){
         <label><input type="checkbox" id="owBand"> seam bands</label>
         <button id="owClose">CLOSE</button></div>
       <canvas id="owCanvas" style="image-rendering:pixelated;max-width:100%;border:2px solid #000"></canvas>
-      <div style="margin-top:6px">Key: <span style="color:#dec48c">■</span> path <span style="color:#a4dc6e">■</span> verge
+      <div style="margin-top:6px">Key: <span style="color:#e8b060">■</span> path <span style="color:#a4dc6e">■</span> verge
         <span style="color:#78c850">■</span> open ground <span style="color:#287038">■</span> trees <span style="color:#96785a">■</span> rock
-        <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge · dark squares have no route or town</div>
+        <span style="color:#48a0e0">■</span> water <span style="color:#b07840">■</span> bridge <span style="color:#604e46">■</span> cliff
+        <span style="color:#c4a870">■</span> ledge (one-way) <span style="color:#faf6ec">■</span> stairs · lighter ground is higher · dark squares have no route or town</div>
       <pre id="owReport" style="white-space:pre-wrap;margin-top:6px"></pre>`;
     document.body.appendChild(box);
     $('owClose').onclick = () => box.remove();
@@ -3685,9 +3686,11 @@ function drawOverworld(){
   cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
   const r = res.report, lines = [
     `${r.squares} map(s), ${r.contracts} edge contract(s), ${Math.round(performance.now() - t0)} ms · seed ${r.seed} · ${r.version}`,
-    r.ok ? 'Checks passed: seams match, every connection is two-way, every port and junction is reachable.' : 'CHECKS FAILED',
+    r.ok ? 'Checks passed: seams match, every connection is two-way, every port and junction is reachable, no ledge traps.' : 'CHECKS FAILED',
     ...r.seamFailures.map(s => 'Seam: ' + s), ...r.reciprocityFailures.map(s => 'Connection: ' + s), ...r.unreachable.map(s => 'Unreachable: ' + s),
     `Repairs: ${r.repairs} · fallbacks: ${r.fallbacks} · first-pass reachable: ${r.firstPassReachable}/${r.squares} · connected groups: ${r.components}`,
+    `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.ledgeTiles} ledge and ${r.stairTiles} stair tiles · ${r.trapFixes} ledge tile(s) made two-way so nothing traps you`,
+    `Exploration: ${r.waypoints} waypoint(s) · ${Math.round(r.offPathShare*100)}% of reachable ground is off the path (target 80%)${r.needSurf.length ? ' · needs Surf: ' + r.needSurf.join(' ') : ''}`,
     ...res.contracts.map(c => `Edge ${c.a.x},${c.a.y}↔${c.b.x},${c.b.y}: port ${c.pos}, path ${c.path}, verge ${c.verge} (${c.source === 'road' ? 'real road' : 'seeded'})${c.notes.length ? ' — ' + [...new Set(c.notes)].join('; ') : ''}`),
     ...res.squares.filter(s => s.log.length).map(s => `Square ${s.x},${s.y}: ${s.log.join('; ')}`),
     (state.roadLines || []).length ? '' : 'Note: no road geometry in memory (restored or imported region), so ports use seeded positions. Forge again to use real roads.'
