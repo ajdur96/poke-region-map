@@ -205,6 +205,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="overworld/overworldGen.js"></script>
+<script src="overworld/tileModel.js"></script>
 <script>
 // ===== Grid constants =====
 // Emerald's region map is 28x15 squares of 8x8 px. Each square is split into 4x4
@@ -3713,6 +3714,18 @@ function overworldCenter(){
   if (state.sel && state.sel.type === 'town'){ const t = townById(state.sel.id); if (t) return { x:t.x, y:t.y }; }
   return state.cursor || { x:0, y:0 };
 }
+// decoded atlas of the real-tile model (loaded once from overworld/tileModel.js)
+let owAtlasImg = null, owAtlasLoading = false;
+function owAtlas(onReady){
+  if (owAtlasImg) return owAtlasImg;
+  if (typeof OW_TILE_MODEL === 'undefined' || owAtlasLoading) return null;
+  owAtlasLoading = true;
+  const im = new Image();
+  im.onload = () => { const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; const g = c.getContext('2d'); g.drawImage(im, 0, 0);
+    owAtlasImg = g.getImageData(0, 0, im.width, im.height); if (onReady) onReady(); };
+  im.src = OW_TILE_MODEL.atlas;
+  return null;
+}
 function showOverworld(){
   if (!state.terrain){ setStatus('Forge a region first.'); return; }
   if (typeof OverworldGen === 'undefined'){ setStatus('Overworld generator (overworld/overworldGen.js) did not load.'); return; }
@@ -3723,7 +3736,8 @@ function showOverworld(){
     box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-family:'Press Start 2P',monospace;font-size:10px">OVERWORLD 3×3 (PROTOTYPE)</b>
         <label>terrace blocks <select id="owBlock"><option value="4" selected>4×4</option><option value="3">3×3</option></select></label>
-        <label>view <select id="owMode"><option value="terrain" selected>terrain</option><option value="walk">walkability</option></select></label>
+        <label>view <select id="owMode"><option value="real" selected>real tiles</option><option value="terrain">terrain</option><option value="walk">walkability</option></select></label>
+        <label><input type="checkbox" id="owApprox"> mark guessed tiles</label>
         <label><input type="checkbox" id="owSeams" checked> seams</label>
         <label><input type="checkbox" id="owBand"> seam bands</label>
         <button id="owClose">CLOSE</button></div>
@@ -3733,7 +3747,7 @@ function showOverworld(){
       <pre id="owReport" style="white-space:pre-wrap;margin-top:6px"></pre>`;
     document.body.appendChild(box);
     $('owClose').onclick = () => box.remove();
-    for (const id of ['owMode', 'owSeams', 'owBand', 'owBlock']) $(id).onchange = drawOverworld;
+    for (const id of ['owMode', 'owSeams', 'owBand', 'owBlock', 'owApprox']) $(id).onchange = drawOverworld;
   }
   drawOverworld();
 }
@@ -3751,7 +3765,16 @@ function drawOverworld(){
        <span style="color:#d6d6de">■</span> stone <span style="color:#c49260">■</span> dirt <span style="color:#f0d69c">■</span> sand <span style="color:#ecf4ff">■</span> snow
        · hatched = scenery map (look-only) · checkered strips = border blocks
        · lighter ground is higher · wild squares show their route as faintly tinted ground · dark squares have no route or town`;
-  const img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked, scale:6, mode:$('owMode').value });
+  let img;
+  const realOk = $('owMode').value === 'real' && typeof OW_TILE_MODEL !== 'undefined' && owAtlas();
+  if (realOk){
+    img = OverworldGen.toRealRGBA(res, OW_TILE_MODEL, owAtlas(), { showSeams:$('owSeams').checked, showApprox:$('owApprox').checked });
+    $('owKey').innerHTML = `Real Emerald tiles (General + Petalburg), chosen the way Emerald's own routes use them · ${(img.approxShare*100).toFixed(1)}% of tiles are guesses (shapes Emerald never draws; tick "mark guessed tiles" to see them in red) · Rock Climb walls are tinted purple · darkened squares are scenery maps · the art is Nintendo/Game Freak's, from the pokeemerald decomp`;
+  } else {
+    if ($('owMode').value === 'real') $('owKey').innerHTML = 'Real tiles are still loading; showing the terrain view.';
+    img = OverworldGen.toRGBA(res, { showSeams:$('owSeams').checked, showBand:$('owBand').checked, scale:6, mode:$('owMode').value === 'walk' ? 'walk' : 'terrain' });
+    if (!owAtlasImg) owAtlas(drawOverworld);
+  }
   const cv = $('owCanvas'), k = Math.max(0.5, Math.min(2, Math.min(innerWidth*0.85, innerHeight*0.7)/img.width));
   cv.width = img.width; cv.height = img.height; cv.style.width = Math.round(img.width*k) + 'px';
   cv.onmousemove = e => { const b = cv.getBoundingClientRect();

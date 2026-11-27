@@ -56,6 +56,8 @@ rep('</main>', '''</main>
 # the overworld generator is a separate file in the full version; the hosted demo can't load files, so inline it
 _ow = open(os.path.join(ROOT, 'overworld', 'overworldGen.js'), encoding='utf-8').read()
 rep('<script src="overworld/overworldGen.js"></script>', '<script>\n' + _ow + '\n</script>')
+_tm = open(os.path.join(ROOT, 'overworld', 'tileModel.js'), encoding='utf-8').read()
+rep('<script src="overworld/tileModel.js"></script>', '<script>\n' + _tm + '\n</script>')
 rep('<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>', r'''<script>
 // Offline stand-in for Leaflet. The hosted demo can't load libraries or map tiles from other sites,
 // and the editor only needs Leaflet's Web-Mercator maths, so this provides just that.

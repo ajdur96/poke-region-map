@@ -691,7 +691,7 @@ function generate(inp){
           const th = CONTENT.border[0] + Math.floor((CONTENT.border[1] - CONTENT.border[0] + 0.999)*smoothNoise(hash32(sBorder, line, side <= 1 ? 1 : 2), along, 0, 5));
           for (let d = 0; d < th; d++){ const { lx, ly } = cell(d, t), i = ly*N + lx;
             if (T[i] === TILE.WATER){ if (RV[i]) T[i] = TILE.ROCK; }          // rocks in the river: nothing leaves this way
-            else T[i] = borderWall; }
+            else if (T[i] !== TILE.CLIFF) T[i] = borderWall; }                   // cliffs run on through the border to the map edge
         }
         continue;
       }
@@ -719,7 +719,7 @@ function generate(inp){
       for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
         const gx = sx*N + lx, gy = sy*N + ly, d = Math.hypot(gx + 0.5 - px, gy + 0.5 - py);
         if (d > 3 + 1.5*smoothNoise(sBorder, gx, gy, 3)) continue;
-        const i = ly*N + lx; if (T[i] === TILE.WATER){ if (RV[i]) T[i] = TILE.ROCK; } else T[i] = fill;
+        const i = ly*N + lx; if (T[i] === TILE.WATER){ if (RV[i]) T[i] = TILE.ROCK; } else if (T[i] !== TILE.CLIFF) T[i] = fill;   // cliffs run on through
       }
     }
 
@@ -1464,6 +1464,59 @@ function toRGBA(res, opts = {}){
   }
   return { width:W, height:H, data:img, scale:S };
 }
+// Real-tile preview (proto-7): draws each map with real Emerald metatiles (General + Petalburg for now), chosen by the
+// model that tools/build_tile_model.py learns from the vanilla routes. Each tile gets a class; the metatile is picked
+// from what Emerald uses for that class given which neighbours share it and the metatiles already placed to the west
+// and north, falling back to coarser contexts when an exact one was never seen. `approx` counts tiles that had to fall
+// back past the neighbour-shape level (a sign the shape has no real-tile equivalent).
+const REAL_CLASS = { [TILE.OPEN]:'G', [TILE.VERGE]:'G', [TILE.PATH]:'P', [TILE.TREE]:'T', [TILE.ROCK]:'C', [TILE.WATER]:'W',
+  [TILE.BRIDGE]:'P', [TILE.CLIFF]:'C', [TILE.LEDGE_S]:'s', [TILE.LEDGE_E]:'e', [TILE.LEDGE_W]:'w', [TILE.STAIRS]:'S',
+  [TILE.SIDE_STAIRS]:'S', [TILE.TALL_GRASS]:'H', [TILE.LONG_GRASS]:'H', [TILE.LEDGE_CORNER]:'C', [TILE.ROCK_CLIMB]:'C' };
+function placeRealTiles(cl, W, H, model, salt){
+  const out = new Int16Array(W*H), lv = new Uint8Array(W*H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    const i = y*W + x, c = cl[i]; let mask = 0, bit = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){
+      if (!dx && !dy) continue; const nx = x + dx, ny = y + dy;
+      const same = nx < 0 || ny < 0 || nx >= W || ny >= H ? true : cl[ny*W + nx] === c;
+      if (same) mask |= 1 << bit; bit++; }
+    const wid = x > 0 ? out[i - 1] : -1, nid = y > 0 ? out[i - W] : -1;
+    const keys = [`${c}${mask}|${wid}|${nid}`, `${c}${mask}|${wid}|`, `${c}${mask}||${nid}`, `${c}${mask}`, c];
+    out[i] = 1; lv[i] = 5;
+    for (let k = 0; k < 5; k++){ const e = model.levels[k][keys[k]]; if (!e) continue;
+      let tot = 0; for (const [, n] of e) tot += n;
+      let r = hash32(salt, x, y) % tot;
+      for (const [m, n] of e){ if (r < n){ out[i] = m; break; } r -= n; }
+      lv[i] = k; break; }
+  }
+  return { ids:out, level:lv };
+}
+// atlas: { width, data } RGBA pixels of the model's atlas (decoded by the caller). 16 px per tile.
+function toRealRGBA(res, model, atlas, opts = {}){
+  const N = res.N, TS = 16, W = res.window.w*N*TS, H = res.window.h*N*TS, img = new Uint8ClampedArray(W*H*4);
+  for (let i = 0; i < W*H; i++){ img[i*4] = 40; img[i*4 + 1] = 44; img[i*4 + 2] = 60; img[i*4 + 3] = 255; }
+  const blit = (m, ox, oy, dim, tint) => { const ax = (m % model.cols)*TS, ay = Math.floor(m/model.cols)*TS;
+    for (let py = 0; py < TS; py++) for (let px = 0; px < TS; px++){
+      const s = ((ay + py)*atlas.width + ax + px)*4, d = ((oy + py)*W + ox + px)*4;
+      let r = atlas.data[s], g = atlas.data[s + 1], b = atlas.data[s + 2];
+      if (tint){ r = r*0.6 + tint[0]*0.4; g = g*0.6 + tint[1]*0.4; b = b*0.6 + tint[2]*0.4; }
+      if (dim){ r = r*0.55 + 20; g = g*0.55 + 20; b = b*0.55 + 30; }
+      img[d] = r; img[d + 1] = g; img[d + 2] = b; } };
+  let approx = 0, total = 0;
+  for (const s of [...res.squares, ...(res.scenery || [])]){
+    const cl = Array.from(s.tiles, t => REAL_CLASS[t] || 'G');
+    const pl = placeRealTiles(cl, N, N, model, hash32(s.x, s.y, 99));
+    const ox = (s.x - res.window.x0)*N*TS, oy = (s.y - res.window.y0)*N*TS;
+    for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
+      const i = ly*N + lx; if (!s.blocked){ total++; if (pl.level[i] >= 3) approx++; }
+      const tint = s.tiles[i] === TILE.ROCK_CLIMB ? [210, 80, 210] : (opts.showApprox && pl.level[i] >= 3 ? [255, 0, 0] : null);
+      blit(pl.ids[i], ox + lx*TS, oy + ly*TS, !!s.blocked, tint);
+    }
+  }
+  if (opts.showSeams) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    if (x % (N*TS) && y % (N*TS)) continue; const o = (y*W + x)*4; img[o] = img[o]*0.6 + 102; img[o + 1] = img[o + 1]*0.6; img[o + 2] = img[o + 2]*0.6; }
+  return { width:W, height:H, data:img, scale:TS, approxShare:total ? approx/total : 0 };
+}
 // What is at a pixel of the preview (for hover tooltips)
 function describeAt(res, px, py, scale){
   const N = res.N, S = scale || 1, gx = Math.floor(px/S), gy = Math.floor(py/S);
@@ -1476,7 +1529,7 @@ function describeAt(res, px, py, scale){
   return `square ${sx},${sy}${sq.wild ? ' (wild)' : ''} · border ${sq.border} · tile ${lx},${ly} · ${TILE_NAMES[sq.tiles[i]]}${st}${sq.trail[i] ? ' · main route' : ''} · level ${sq.level[i]}${sq.protectedMask[i] ? ' · seam band' : ''}`;
 }
 
-const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, WILD, CONTENT, generate, toRGBA, describeAt, makeSeeds, hash32, mulberry32 };
+const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, WILD, CONTENT, generate, toRGBA, toRealRGBA, placeRealTiles, describeAt, makeSeeds, hash32, mulberry32 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else root.OverworldGen = api;
 })(typeof self !== 'undefined' ? self : this);
