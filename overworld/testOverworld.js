@@ -63,10 +63,8 @@ for (const [N, block] of [[36, 4], [36, 3]]){
   check(res.report.unreachable.length === 0, `N=${N}: every port and junction reachable`);
   check(res.report.components === 1, `N=${N}: window's map graph is connected`);
   check(res.report.traps === 0, `N=${N}: no ledge traps (everywhere reachable can get back)`);
-  check(res.report.diagStairConflicts === 0, `N=${N} block ${block}: no stair flights diagonal to each other`);
   check(res.scenery.every(sc => sc.blocked), `N=${N} block ${block}: scenery maps are fully blocked (${res.scenery.length})`);
-  check(res.report.ledgeBesideCliff === 0, `N=${N} block ${block}: no ledge sits on the same line as a cliff`);
-  check(res.report.badLandings === 0, `N=${N} block ${block}: every stair flight has ground at both ends (${res.report.stairFlights} flights)`);
+  check(res.report.hardFailures.length === 0, `N=${N} block ${block}: every square passes every relief check (${res.report.stairFlights} flights, ${res.report.flightsPer100}/100 walkable; retries ${res.report.retries.join(' ') || 'none'})${res.report.hardFailures.length ? '\n    ' + res.report.hardFailures.join('\n    ') : ''}`);
   // band rule: inside the 7-tile band, only straight approaches (path/verge/bridge) or base terrain — the band at
   // each port must be exactly the contract width on both sides
   for (const k of res.contracts){

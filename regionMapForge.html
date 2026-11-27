@@ -3761,12 +3761,13 @@ function drawOverworld(){
   cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
   const r = res.report, lines = [
     `${r.squares} map(s), ${r.contracts} edge contract(s), ${Math.round(performance.now() - t0)} ms · seed ${r.seed} · ${r.version}`,
-    r.ok ? 'Checks passed: seams match, every connection is two-way, every port and junction is reachable, no ledge traps.' : 'CHECKS FAILED',
+    r.ok ? 'Checks passed: seams match, every connection is two-way, every port and junction is reachable, no ledge traps, every stair flight, cliff and ledge passes the relief checks.' : 'CHECKS FAILED',
+    ...r.hardFailures.map(s => 'Relief: ' + s),
     ...r.seamFailures.map(s => 'Seam: ' + s), ...r.reciprocityFailures.map(s => 'Connection: ' + s), ...r.unreachable.map(s => 'Unreachable: ' + s),
     `Repairs: ${r.repairs} · fallbacks: ${r.fallbacks} · first-pass reachable: ${r.firstPassReachable}/${r.squares} · connected groups: ${r.components}`,
-    `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.ledgeTiles} ledge and ${r.stairTiles} stair tiles · ${r.trapFixes} ledge tile(s) opened into gaps so nothing traps you · ${r.ledgesHidden} ledge tile(s) around unreachable ground made cliff`,
+    `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.stairFlights} stair flights (${r.flightsPer100} per 100 walkable tiles; target 1, cap 8, 12 on rugged ground) · ${r.ledgeTiles} ledge tiles (${r.ledgeTilesPer100} per 100) · retries: ${r.retries.join(' ') || 'none'}`,
     `Exploration: ${r.waypoints} waypoint(s) · ${Math.round(r.offPathShare*100)}% of reachable ground is off the path (target 80%)${r.needSurf.length ? ' · needs Surf: ' + r.needSurf.join(' ') : ''}`,
-    `Terraces: ${r.terraceBlock}×${r.terraceBlock} blocks · ${r.cliffRuns} straight cliff runs · ${r.stairFlights} stair flights · knight's-move conflicts: ${r.diagStairConflicts} · flights without ground at an end: ${r.badLandings} · ledges beside cliffs: ${r.ledgeBesideCliff}${r.scenery.length ? ' · scenery maps: ' + r.scenery.join('; ') : ''}`,
+    `Terraces: ${r.terraceBlock}×${r.terraceBlock} blocks · flights per map (found/target, R = rugged): ${r.flightsPerSquare.join(' ')}${r.scenery.length ? ' · scenery maps: ' + r.scenery.join('; ') : ''}`,
     `Off-path content: ${r.spursGap} hidden gap(s) and ${r.spursTrail} side trail(s) · ${r.loops} loop(s) · ${r.ponds} pond(s) · ${r.thicketTiles} thicket tiles · tall grass ${Math.round(r.grassShare*100)}% of reachable ground (${r.grassSource})${r.wild.length ? ' · wild squares: ' + r.wild.join(' ') : ''}`,
     ...res.contracts.map(c => `Edge ${c.a.x},${c.a.y}↔${c.b.x},${c.b.y}: port ${c.pos}, path ${c.path}, verge ${c.verge} (${c.source === 'road' ? 'real road' : 'seeded'})${c.notes.length ? ' — ' + [...new Set(c.notes)].join('; ') : ''}`),
     ...res.squares.filter(s => s.log.length).map(s => `Square ${s.x},${s.y}: ${s.log.join('; ')}`),

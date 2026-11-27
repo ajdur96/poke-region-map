@@ -240,16 +240,18 @@
  *      rocky land with outcrops), so most land stays open to explore.
  *   2. Water is structural: lakes/sea from the terrain grid and 2-tile river channels.
  *   3. Cellular automata (8 neighbours; wall opens below 4 wall neighbours, open walls at 5 or more; 3 passes).
- *   4. Relief (new in proto-2): elevation becomes terrace levels; level boundaries become cliffs, some 1-level
- *      cliffs facing south/east/west become one-way ledges, and some cliff tiles become stairs (side stairs on
- *      east/west-facing cliffs) so plateaus can be explored.
+ *   4. Relief (proto-6, object-first): cliffs only from real elevation plus a mountain boost; narrow plateaus merge
+ *      away before cliffs are drawn; cliffs are 1 tile thick, 2–3 on rugged ground, continuous by construction.
+ *      Per square, stair flights are placed as whole prefabs (set into a straight cliff, flanked, full depth, 2 tiles of
+ *      landing at both ends) by a plateau graph: fewest flights joining the ports and junction, then extras. Ledges are
+ *      a separate layer on flat ground, each run kept only if nothing gets trapped. Read-only checks per square; a
+ *      square that fails is regenerated with a new attempt seed and simpler relief, never patched.
  *   5. Edge contracts: one per linked edge (port position, path width, verge width), shared by both squares.
  *   6. Paths: straight approaches through the 7-tile seam band; inside, a winding least-cost path through 1–3
  *      seeded waypoints drawn to interesting spots (water's edge, clearings, high ground); path + verge widths from
  *      local land cover (Option C); bridges over rivers; stairs where the path climbs a cliff.
- *   7. Validation and repair: reachability that understands one-way ledges (every port must reach every other and
- *      come back; any ledge that would trap the player becomes stairs), A* repair, a guaranteed fallback,
- *      region-wide checks, and an off-path exploration share.
+ *   7. Validation: reachability that understands one-way ledges (every port reaches every other and back), A* repair
+ *      through walls on one level, relief checks by structure ID, region-wide checks, and an off-path exploration share.
  *
  * Tiles are abstract classes (see TILE). Picking real metatiles comes in a later step.
  * Pure functions, no DOM: runs in the browser (window.OverworldGen) and in Node (module.exports) for tests.
@@ -257,7 +259,7 @@
 (function (root) {
 'use strict';
 
-const VERSION = 'ow-proto-5';
+const VERSION = 'ow-proto-6';
 const BAND = 7;                                    // seam band depth in metatiles (pokeemerald MAP_OFFSET = 7)
 const PAD = 8;                                     // raster margin around the window so results don't depend on it
 
@@ -297,7 +299,22 @@ const PROFILE = [
 const LIMITS = { pathMin:3, pathMax:6, vergeMin:1, vergeMax:4 };
 const COST = { corner:25, roadFactor:0.3, slopeK:2, noiseM:1.5, noiseScale:4, turn:0.1, reuse:2, cliff:5, riverCrossing:8, surf:2, peak:12,
                repairWall:6, repairRiver:10 };
-const RELIEF = { minStepM:12, stepDivisor:4, compress:3, noise:0.45, minFlat:3, gapChance:0.6 };
+// Relief (proto-6). mtnBoost: extra terrace levels on rugged ground (not from the contours); morphR: plateaus and
+// valleys narrower than 2r+1 blocks merge away; ruggedMin: rugged share that makes cliffs 2–3 thick and lifts the stair
+// cap to 12; steepSlope: grade (rise/run) that counts as fully rugged. Starting values (Claude's judgment).
+const RELIEF = { minStepM:12, stepDivisor:4, compress:3, noise:0.45, mtnBoost:2.5, morphR:1, ruggedMin:0.4, steepSlope:0.3 };
+// Stair flights (decided 2026-11-27): 1 per 100 walkable tiles, at most 8 (12 on rugged ground); width by land cover
+// (1 in forest/jungle/mangrove/wetland, 3 in desert and built-up, else 2 — Claude's proposal from Emerald's data).
+const STAIRS = { per100:1, cap:8, capRugged:12, gap:4 };
+const STAIR_WIDTH = { 1:1, 6:1, 2:1, 3:3, 9:3 };
+// Ledges (Emerald's routes): ledge tiles per 100 walkable tiles by land cover; runs of 3+ tiles; turn chance; share
+// allowed with no wall at either end.
+const LEDGES = { density:{ 0:5, 8:5, 5:4, 10:5, 4:3, 7:3, 3:1.2, 2:1, 1:0.4, 6:0.3, 9:0 }, maxExtra:9, turnChance:0.4, openBothEnds:0.15, tries:300 };
+// Retry ladder: each attempt gets a new seed; later ones simplify (fewer extra flights, fewer ledges). Shared edge
+// contracts never change between attempts.
+const ATTEMPTS = [{ name:'full', extras:1, ledges:1 }, { name:'full, new seed', extras:1, ledges:1 }, { name:'fewer extras', extras:0.5, ledges:0.5 },
+                  { name:'fewer extras, new seed', extras:0.5, ledges:0.5 }, { name:'essential crossings only', extras:0, ledges:0 },
+                  { name:'essential crossings only, new seed', extras:0, ledges:0 }];
 // What a cliff run becomes, by the land cover on its high side (starting values; Claude's judgment): the chance a
 // straight run carries a ledge, the chance it gets a flight of stairs, and the stairs' look (a palette, not new shapes).
 const CROSSING = {
@@ -372,13 +389,14 @@ class MinHeap {
 // The region data is a sub-grid (`sub` cells per square side). Each tile blends the four nearest sub-cells.
 function makeSampler(inp){
   const SW = inp.gridW*inp.sub, SH = inp.gridH*inp.sub, N = inp.N;
-  const subClass = new Uint8Array(SW*SH), peak = new Uint8Array(SW*SH);
+  const subClass = new Uint8Array(SW*SH), peak = new Uint8Array(SW*SH), hillSub = new Uint8Array(SW*SH);
   const PSEUDO_ELEV = [0, 20, 150, 400, 700];      // used only when the region has no elevation data
   const elevSub = new Float32Array(SW*SH);
   for (let i = 0; i < SW*SH; i++){
     const t = inp.terrain[i];
     if (t === FORGE_T.SEA || (inp.lake && inp.lake[i])) subClass[i] = CLS.WATER;
     else if (t === FORGE_T.MTN || t === FORGE_T.PEAK) { subClass[i] = CLS.ROCKY; peak[i] = t === FORGE_T.PEAK ? 1 : 0; }
+    if (t === FORGE_T.HILL) hillSub[i] = 1;
     else subClass[i] = Math.min(inp.cover ? inp.cover[i] : 0, 9);
     elevSub[i] = inp.elev ? (inp.elev[i] || 0) : PSEUDO_ELEV[t] || 0;
   }
@@ -405,10 +423,14 @@ function makeSampler(inp){
   const stepM = Math.max(RELIEF.minStepM, p75/RELIEF.stepDivisor);
   let elevMin = Infinity; for (let i = 0; i < SW*SH; i++) if (subClass[i] !== CLS.WATER) elevMin = Math.min(elevMin, elevSub[i]);
   if (!isFinite(elevMin)) elevMin = 0;
+  // land-only elevation (water cells at the lowest land height) for slopes, so sea-floor depths never look like steep ground
+  const elevLandSub = elevSub.map((e, i) => subClass[i] === CLS.WATER ? elevMin : e);
   return {
     SW, SH, subClass, peak, stepM, elevMin,
     shares(gx, gy){ const s = new Float64Array(NCLS); for (const [i, w] of weights(gx, gy)) s[subClass[i]] += w; return s; },
     elev(gx, gy){ let e = 0; for (const [i, w] of weights(gx, gy)) e += w*elevSub[i]; return e; },
+    elevLand(gx, gy){ let e = 0; for (const [i, w] of weights(gx, gy)) e += w*elevLandSub[i]; return e; },
+    hill(gx, gy){ let e = 0; for (const [i, w] of weights(gx, gy)) e += w*hillSub[i]; return e; },
     ndvi(gx, gy){ if (!inp.ndvi) return null; let v = 0, w = 0;
       for (const [i, wt] of weights(gx, gy)) if (inp.ndvi[i]){ v += wt*(inp.ndvi[i] - 1)/254; w += wt; }
       return w > 0.25 ? v/w : null; },
@@ -540,156 +562,75 @@ function generate(inp){
       else if (!isWall(copy[i]) && walls >= 5) tiles[i] = wallTile(cls[i]);
     }
   }
-  // relief (proto-5): rectilinear terraces. Levels are decided per block of B×B tiles (B = 3 or 4, aligned to global
-  // tile coordinates so seams match), smoothed, and spaced so there are at least 3 flat tiles between two parallel
-  // boundaries. Each straight run of a boundary is all ledge or all cliff (never both on one line); ledge runs get
-  // walk-around gaps, cliff runs get stair flights that always have ground to stand on at both ends (on steep ground a
-  // flight carries on up the next cliff, so it climbs several levels at once).
-  const B = inp.terraceBlock === 3 ? 3 : 4;
-  const bx0 = Math.floor(RX0/B) - 2, by0 = Math.floor(RY0/B) - 2, BW = Math.ceil(RW/B) + 5, BH = Math.ceil(RH/B) + 5;
-  const blev = new Int16Array(BW*BH);
+  // relief (proto-6): cliffs come only from real elevation, plus a mountain boost (extra relief not from the contours, so
+  // rugged ground feels like mountains). Levels are decided per B×B block (aligned to global tiles), then a grey-scale
+  // closing and opening removes terraces and valleys narrower than (2r+1) blocks, so narrow plateaus merge into a
+  // neighbour before any cliff is drawn. Everything is local on a block grid with a wide margin, so it never depends on
+  // the window. Ledges are no longer part of the relief: they are their own layer, placed per square later.
+  const B = inp.terraceBlock === 3 ? 3 : 4, MB = 12;
+  const bx0 = Math.floor(RX0/B) - MB, by0 = Math.floor(RY0/B) - MB, BW = Math.ceil(RW/B) + 2*MB + 1, BH = Math.ceil(RH/B) + 2*MB + 1;
+  let blev = new Int16Array(BW*BH);
+  const sMtn = seeds.layer('mountain'), sThick = seeds.layer('thickness');
+  const mpt = (inp.kmPerSquare || 1)*1000/N;
+  const ruggedParts = (gx, gy) => {
+    const s = sampler.shares(gx, gy), cls3 = s[CLS.ROCKY] + s[CLS.SNOW] + s[CLS.TUNDRA] + sampler.hill(gx, gy);
+    const ex = sampler.elevLand(gx + 2, gy) - sampler.elevLand(gx - 2, gy), ey = sampler.elevLand(gx, gy + 2) - sampler.elevLand(gx, gy - 2);
+    const slope = Math.hypot(ex, ey)/(4*mpt);
+    return [Math.min(1, cls3), Math.min(1, slope/RELIEF.steepSlope)];
+  };
+  const rugged = (gx, gy) => { const [a, b] = ruggedParts(gx, gy); return Math.max(a, b); };   // 0–1: rugged cover/terrain, or steep real ground
   for (let by = 0; by < BH; by++) for (let bx = 0; bx < BW; bx++){
-    const gx = (bx0 + bx)*B + B/2, gy = (by0 + by)*B + B/2;
+    const gx = (bx0 + bx)*B + B/2, gy = (by0 + by)*B + B/2, R = rugged(gx, gy);
     const e = sampler.elev(gx, gy) + RELIEF.noise*sampler.stepM*(2*smoothNoise(sLev, gx, gy, 7) - 1);
     const d = Math.max(0, (e - sampler.elevMin)/sampler.stepM);
-    blev[by*BW + bx] = Math.floor(RELIEF.compress*Math.log2(1 + d/RELIEF.compress));   // log-compressed: big mountains get a few tall terraces
+    // the mountain boost is added in levels, after compression, so high ground isn't flattened by the log
+    blev[by*BW + bx] = Math.floor(RELIEF.compress*Math.log2(1 + d/RELIEF.compress) + RELIEF.mtnBoost*R*smoothNoise(sMtn, gx, gy, 10));
   }
-  { const copy = blev.slice();                     // smoothing: a block that sticks out from 3+ of its 4 neighbours joins them
-    for (let by = 1; by < BH - 1; by++) for (let bx = 1; bx < BW - 1; bx++){
-      const i = by*BW + bx, nb = [copy[i - 1], copy[i + 1], copy[i - BW], copy[i + BW]].sort((p, q) => p - q);
-      if (nb.filter(v => v !== copy[i]).length >= 3) blev[i] = nb[1];
-    } }
-  // spacing: a terrace step narrower than `minBlocks` between a lower and a higher neighbour (along x or y) drops to
-  // the lower level, which merges two cliffs into one taller face instead of squeezing a sliver of ground between them
-  const minBlocks = Math.ceil((RELIEF.minFlat + 2)/B);
-  for (let pass = 0; pass < 4; pass++){
-    let changed = 0; const copy = blev.slice();
-    for (let by = 2; by < BH - 2; by++) for (let bx = 2; bx < BW - 2; bx++){
-      const i = by*BW + bx, v = copy[i];
-      for (const [dx, dy] of [[1, 0], [0, 1]]){
-        let a = 1; while (a <= minBlocks && copy[i - a*(dy*BW + dx)] === v) a++;
-        let b = 1; while (b <= minBlocks && copy[i + b*(dy*BW + dx)] === v) b++;
-        const lo2 = copy[i - a*(dy*BW + dx)], hi2 = copy[i + b*(dy*BW + dx)], width = a + b - 1;
-        if (width < minBlocks && ((lo2 < v && hi2 > v) || (lo2 > v && hi2 < v))){ blev[i] = Math.min(lo2, hi2); changed++; break; }
-      }
-    }
-    if (!changed) break;
-  }
+  const morph = (src, useMax) => { const out = new Int16Array(BW*BH), r = RELIEF.morphR;
+    for (let by = 0; by < BH; by++) for (let bx = 0; bx < BW; bx++){
+      let v = useMax ? -32768 : 32767;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++){
+        const x = Math.min(BW - 1, Math.max(0, bx + dx)), y = Math.min(BH - 1, Math.max(0, by + dy)), w = src[y*BW + x];
+        v = useMax ? Math.max(v, w) : Math.min(v, w); }
+      out[by*BW + bx] = v; }
+    return out; };
+  blev = morph(morph(blev, true), false);          // closing: fills valleys narrower than the element
+  blev = morph(morph(blev, false), true);          // opening: removes plateaus narrower than the element
   for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++)
     lev[y*RW + x] = blev[(Math.floor((RY0 + y)/B) - by0)*BW + Math.floor((RX0 + x)/B) - bx0];
-  const drop = new Uint8Array(RW*RH), lowers = new Uint8Array(RW*RH);
+  // cliff thickness: 1 tile, or 2–3 on rugged ground (decided 2026-11-27), per 12×12-tile cell aligned to global tiles
+  const thickAt = (gx, gy) => { const cx = Math.floor(gx/12), cy = Math.floor(gy/12);
+    return rugged(cx*12 + 6, cy*12 + 6) < RELIEF.ruggedMin ? 1 : 2 + (rand01(sThick, cx, cy) < 0.5 ? 1 : 0); };
+  const thick = new Uint8Array(RW*RH);
+  for (let y = 0; y < RH; y += 1) for (let x = 0; x < RW; x++) thick[y*RW + x] = thickAt(RX0 + x, RY0 + y);
+  const baseTiles = tiles.slice();
+  const depth = new Uint8Array(RW*RH), corner = new Uint8Array(RW*RH);
   const FD = [[FACE.S, 0, 1], [FACE.E, 1, 0], [FACE.W, -1, 0], [FACE.N, 0, -1]];
-  const fvec = f => { const e = FD.find(q => q[0] === f); return [e[1], e[2]]; };   // the downhill direction a cliff faces
-  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++){
-    const i = y*RW + x; if (water[i]) continue;
-    for (const [f, dx, dy] of FD){
-      const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= RW || ny >= RH) continue;
-      const j = ny*RW + nx; if (water[j]) continue;
-      const d = lev[i] - lev[j];
-      if (d > 0){ lowers[i]++; if (face[i] === FACE.NONE){ face[i] = f; drop[i] = Math.min(d, 9); } }
-    }
-    if (face[i] !== FACE.NONE) tiles[i] = TILE.CLIFF;
-  }
-  // tall faces: a 2+ level drop makes the cliff 2 tiles thick (the tile behind the edge, same level, same facing)
-  for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++){
-    const i = y*RW + x; if (tiles[i] !== TILE.CLIFF || drop[i] < 2 || lowers[i] !== 1) continue;
-    const [dx, dy] = fvec(face[i]), bx = x - dx, by = y - dy;
-    if (bx < 0 || by < 0 || bx >= RW || by >= RH) continue;
-    const j = by*RW + bx; if (water[j] || face[j] !== FACE.NONE || lev[j] !== lev[i]) continue;
-    face[j] = face[i]; drop[j] = 0; tiles[j] = TILE.CLIFF;          // drop 0 marks the back row of a tall face
-  }
-  // straight runs: edge tiles with one lower neighbour (corners have two), same facing, same drop, side by side
-  const runs = [];
-  const runOf = new Int32Array(RW*RH).fill(-1);
-  for (const f of [FACE.S, FACE.N, FACE.E, FACE.W]){
-    const horizontal = f === FACE.S || f === FACE.N;
-    const outer = horizontal ? RH : RW, inner = horizontal ? RW : RH;
-    for (let o = 0; o < outer; o++){
-      let start = -1;
-      const at = t => horizontal ? o*RW + t : t*RW + o;
-      const edge = t => { const i = at(t); return face[i] === f && drop[i] >= 1 && lowers[i] === 1; };
-      for (let t = 0; t <= inner; t++){
-        const ok = t < inner && edge(t) && (start < 0 || drop[at(t)] === drop[at(start)]);
-        if (!ok && start >= 0){
-          const id = runs.length, cells = [];
-          for (let u = start; u < t; u++){ const ci = at(u); cells.push(ci); runOf[ci] = id; }
-          runs.push({ face:f, cells, drop:drop[cells[0]], horizontal, g:horizontal ? [RX0 + start, RY0 + o] : [RX0 + o, RY0 + start] });
-          start = -1;
-        }
-        if (start < 0 && t < inner && edge(t)) start = t;
+  // A land tile is cliff when lower land lies within its thickness (Chebyshev distance), so cliffs are continuous by
+  // construction. It faces the one straight direction that has lower land; two directions, or only diagonal lower land,
+  // make it a corner piece (never stairs, never a flank). depth = how far the lower land is along the face.
+  const computeCliffs = () => {
+    tiles.set(baseTiles); face.fill(FACE.NONE); depth.fill(0); corner.fill(0);
+    for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++){
+      const i = y*RW + x; if (water[i]) continue;
+      const L = lev[i], t = thick[i];
+      let any = false;
+      for (let dy = -t; dy <= t && !any; dy++) for (let dx = -t; dx <= t; dx++){
+        const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= RW || ny >= RH) continue;
+        const j = ny*RW + nx; if (!water[j] && lev[j] < L){ any = true; break; } }
+      if (!any) continue;
+      tiles[i] = TILE.CLIFF;
+      let nf = 0, f = FACE.NONE, k0 = 0;
+      for (const [fc, dx, dy] of FD){
+        for (let k = 1; k <= t; k++){ const nx = x + dx*k, ny = y + dy*k; if (nx < 0 || ny < 0 || nx >= RW || ny >= RH) break;
+          const j = ny*RW + nx; if (water[j]) break;
+          if (lev[j] < L){ nf++; f = fc; k0 = k; break; } }
       }
+      if (nf === 1){ face[i] = f; depth[i] = k0; } else corner[i] = 1;
     }
-  }
-  const ledgeChance = c => CROSSING[c] ? CROSSING[c].ledge : 0.3, stairChance = c => CROSSING[c] ? CROSSING[c].stair : 0.2;
-  const ledgeOf = f => f === FACE.S ? TILE.LEDGE_S : f === FACE.E ? TILE.LEDGE_E : TILE.LEDGE_W;
-  // 1. run types: a whole run is ledge (gentle, 1 level, not north-facing) or cliff
-  for (const run of runs){
-    const r = mulberry32(hash32(sLedge, run.g[0], run.g[1], run.face)), c = cls[run.cells[run.cells.length >> 1]];
-    run.rng = r;
-    run.ledge = run.face !== FACE.N && run.drop === 1 && run.cells.length >= 3 && r() < ledgeChance(c);
-    if (!run.ledge) continue;
-    for (const i of run.cells) tiles[i] = ledgeOf(run.face);
-    // walk-around gaps (1–2 tiles, away from the ends) on longer ledge runs — the way up, as in the games
-    const n = run.cells.length;
-    if (n >= 6 && r() < RELIEF.gapChance){ const w = 1 + (r() < 0.5 ? 1 : 0), pos = 1 + Math.floor(r()*(n - 2 - w));
-      for (let u = pos; u < pos + w; u++){ const i = run.cells[u]; tiles[i] = TILE.OPEN; face[i] = FACE.NONE; } }
-  }
-  // corners: between two ledge runs a ledge corner (can't be jumped); where ledge meets cliff a boulder caps the joint
-  const isLedgeT = t => t === TILE.LEDGE_S || t === TILE.LEDGE_E || t === TILE.LEDGE_W || t === TILE.LEDGE_CORNER;
-  for (let y = 1; y < RH - 1; y++) for (let x = 1; x < RW - 1; x++){
-    const i = y*RW + x; if (tiles[i] !== TILE.CLIFF || runOf[i] >= 0 || drop[i] < 1) continue;
-    let ledgeN = 0, cliffN = 0;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const t = tiles[(y + dy)*RW + x + dx];
-      if (isLedgeT(t)) ledgeN++; else if (t === TILE.CLIFF) cliffN++; }
-    if (ledgeN && !cliffN) tiles[i] = TILE.LEDGE_CORNER; else if (ledgeN && cliffN) tiles[i] = TILE.ROCK;
-  }
-  // guard: a ledge tile never sits on the same line as a cliff tile — the end gets a boulder
-  for (let y = 1; y < RH - 1; y++) for (let x = 1; x < RW - 1; x++){
-    const i = y*RW + x, t = tiles[i]; if (!(t === TILE.LEDGE_S || t === TILE.LEDGE_E || t === TILE.LEDGE_W)) continue;
-    const along = t === TILE.LEDGE_S ? [[1, 0], [-1, 0]] : [[0, 1], [0, -1]];
-    if (along.some(([dx, dy]) => tiles[(y + dy)*RW + x + dx] === TILE.CLIFF)) tiles[i] = TILE.ROCK;
-  }
-  // 2–3. stairs on cliff runs only, with landings: walk down and up from the edge through every cliff tile facing the
-  // same way (tall faces and stacked terraces), then both ends must be ground (trees there are cleared; water, other
-  // cliffs or ledges make the spot unusable)
-  const stairAt = new Map();
-  const inRst = (x, y) => x >= 0 && y >= 0 && x < RW && y < RH;
-  const flightCells = (i0, f, isCliffAt, landOk) => {   // → list of tiles, or null if there is no ground at an end
-    const [dx, dy] = fvec(f), x0 = i0 % RW, y0 = (i0/RW) | 0, cells = [i0];
-    let x = x0 + dx, y = y0 + dy, n = 0;           // downhill
-    while (inRst(x, y) && isCliffAt(y*RW + x, f) && n < 6){ cells.push(y*RW + x); x += dx; y += dy; n++; }
-    if (!inRst(x, y) || !landOk(y*RW + x)) return null;
-    const bottom = y*RW + x;
-    x = x0 - dx; y = y0 - dy; n = 0;               // uphill
-    while (inRst(x, y) && isCliffAt(y*RW + x, f) && n < 6){ cells.push(y*RW + x); x -= dx; y -= dy; n++; }
-    if (!inRst(x, y) || !landOk(y*RW + x)) return null;
-    return { cells, landings:[bottom, y*RW + x] };
   };
-  const rIsCliff = (i, f) => tiles[i] === TILE.CLIFF && face[i] === f;
-  const rLand = i => !water[i] && (tiles[i] === TILE.OPEN || isWall(tiles[i]));
-  const diagConflict = (i, id) => { const x = i % RW, y = (i/RW) | 0;
-    for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]){ const j = (y + dy)*RW + x + dx; if (stairAt.has(j) && stairAt.get(j) !== id) return true; }
-    return false; };
-  for (let id = 0; id < runs.length; id++){
-    const run = runs[id], n = run.cells.length, r = run.rng;
-    if (run.ledge || n < 3 || !(r() < stairChance(cls[run.cells[n >> 1]]))) continue;
-    const w = n >= 8 && r() < 0.5 ? 2 : 1;
-    for (let attempt = 0; attempt < 4; attempt++){
-      const pos = 1 + Math.floor(r()*Math.max(1, n - 1 - w)), cols = [];
-      for (let u = pos; u < pos + w && u < n - 1; u++) cols.push(flightCells(run.cells[u], run.face, rIsCliff, rLand));
-      if (!cols.length || cols.some(c => !c)) continue;
-      const all = cols.flatMap(c => c.cells);
-      if (all.some(i => diagConflict(i, id))) continue;
-      for (const c of cols){ for (const i of c.cells){ tiles[i] = stairsFor(face[i]); stairAt.set(i, id); }
-        for (const l of c.landings) if (isWall(tiles[l])) tiles[l] = TILE.OPEN; }
-      break;
-    }
-  }
-  const runStats = { runs:runs.length };
-  // cliff corners (where a cliff turns): paths and ports keep away, so stairs never meet diagonally at a turn
-  const corner = new Uint8Array(RW*RH);
-  for (let i = 0; i < RW*RH; i++) if (face[i] !== FACE.NONE && drop[i] >= 1 && (lowers[i] >= 2 || runOf[i] < 0)) corner[i] = 1;
-  for (const run of runs){ corner[run.cells[0]] = 1; corner[run.cells[run.cells.length - 1]] = 1; }   // run ends: where the cliff steps or turns
+  computeCliffs();
+  const globalCorner = corner;
 
   // --- Wild squares: no real road through them, not a town, and mostly natural cover → no defined path ---
   const townSet = new Set((inp.townSquares || []).map(q => sqId(q.x, q.y)));
@@ -760,13 +701,12 @@ function generate(inp){
       }
       return false;
     };
-    // cliffs that run along the approach (instead of across it) would turn into stairs running along a cliff
-    const along = i => face[i] !== FACE.NONE && (horiz ? (face[i] === FACE.N || face[i] === FACE.S) : (face[i] === FACE.E || face[i] === FACE.W));
-    const lakeAt = pos => approachCells(pos, i => (water[i] && !river[i]) || corner[i] || along(i));
-    if (lakeAt(clamped)){                             // slide to dry land away from cliff corners (road ports only a little)
+    // an approach stays on one level: slide to dry land with no cliff across it (road ports only a little)
+    const lakeAt = pos => approachCells(pos, i => (water[i] && !river[i]) || tiles[i] === TILE.CLIFF);
+    if (lakeAt(clamped)){
       for (let off = 1; off <= (source === 'road' ? 3 : cMax - cMin); off++){
         const cand = [clamped - off, clamped + off].find(q => q >= cMin && q <= cMax && !lakeAt(q));
-        if (cand !== undefined){ notes.push(`port moved ${clamped} → ${cand} to keep the approach on dry land and off cliff corners`); clamped = cand; break; }
+        if (cand !== undefined){ notes.push(`port moved ${clamped} → ${cand} to keep the approach on dry land and on one level`); clamped = cand; break; }
       }
     }
     let lo2 = lo, hi2 = hi;
@@ -777,6 +717,22 @@ function generate(inp){
     contracts.push(k);
     contractOf.set(sqId(a.x, a.y) + ':' + sideA, k); contractOf.set(sqId(b.x, b.y) + ':' + sideB, k);
   }
+  // approaches stay on one level: where a cliff still crosses a port's approach (both sides, path + verge + a margin,
+  // through the seam band and a few tiles past it), that rectangle takes its most common level and cliffs are redrawn.
+  // Region-level and position-keyed, so both sides of the seam agree.
+  let flattened = 0;
+  for (const k of contracts){
+    const sideA = k.horiz ? 0 : 2, sideB = k.horiz ? 1 : 3, m = k.verge + 3, cells = [];
+    for (const [sq, side] of [[k.a, sideA], [k.b, sideB]]) for (let d = 0; d <= BAND + 4; d++) for (let t = k.pos - k.lo - m; t <= k.pos + k.hi + m; t++){
+      if (t < 0 || t >= N) continue;
+      const lx = side === 0 ? N - 1 - d : side === 1 ? d : t, ly = side === 2 ? N - 1 - d : side === 3 ? d : t;
+      const gx = sq.x*N + lx, gy = sq.y*N + ly; if (inR(gx, gy)) cells.push(ri(gx, gy)); }
+    if (!cells.some(i => tiles[i] === TILE.CLIFF)) continue;
+    const cnt = new Map(); for (const i of cells) if (!water[i]) cnt.set(lev[i], (cnt.get(lev[i]) || 0) + 1);
+    let best = null; for (const [v, n] of cnt) if (!best || n > best[1] || (n === best[1] && v < best[0])) best = [v, n];
+    if (best){ for (const i of cells) lev[i] = best[0]; flattened++; k.notes.push('approach levelled (a cliff crossed it)'); }
+  }
+  if (flattened) computeCliffs();
 
   // --- 6. Per-square paths ---
   const roadTilesFor = (sx, sy) => {
@@ -843,15 +799,19 @@ function generate(inp){
     const n = Math.min(1, Math.max(0, (smoothNoise(sGrass, gx, gy, 4) - 0.5)*2.2 + 0.5));
     return 0.7*n + 0.3*rand01(sGrass2, gx, gy) < share;
   };
-  for (const sq of winSquares){
+  const squareRugged = (x, y) => { let r = 0, n = 0;
+    for (let ly = 2; ly < N; ly += 4) for (let lx = 2; lx < N; lx += 4){ r += rugged(x*N + lx, y*N + ly); n++; } return r/n; };
+  const buildSquare = (sq, attempt) => {
     const sx = sq.x, sy = sq.y, id = sqId(sx, sy), sLog = [], wild = wildSet.has(id);
-    const T = new Uint8Array(N*N), K = new Uint8Array(N*N), L = new Int16Array(N*N), F = new Uint8Array(N*N), RV = new Uint8Array(N*N), CN = new Uint8Array(N*N);
+    const T = new Uint8Array(N*N), K = new Uint8Array(N*N), L = new Int16Array(N*N), F = new Uint8Array(N*N), RV = new Uint8Array(N*N), D = new Uint8Array(N*N);
     const protectedMask = new Uint8Array(N*N), trail = new Uint8Array(N*N);   // trail: the main route (path tiles, or natural ground in wild squares)
     for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++){
       const i = ri(sx*N + lx, sy*N + ly), j = ly*N + lx;
-      T[j] = tiles[i]; K[j] = cls[i]; L[j] = lev[i]; F[j] = face[i]; RV[j] = river[i]; CN[j] = corner[i];
+      T[j] = tiles[i]; K[j] = cls[i]; L[j] = lev[i]; F[j] = face[i]; RV[j] = river[i]; D[j] = depth[i];
     }
     const inBand = (lx, ly) => lx < BAND || ly < BAND || lx >= N - BAND || ly >= N - BAND;
+    const corner = new Uint8Array(N*N);
+    for (let ly = 0; ly < N; ly++) for (let lx = 0; lx < N; lx++) corner[ly*N + lx] = globalCorner[ri(sx*N + lx, sy*N + ly)];
     const wallFor = i => (K[i] === CLS.DESERT || K[i] === CLS.TUNDRA || K[i] === CLS.SNOW || K[i] === CLS.ROCKY) ? TILE.ROCK : TILE.TREE;
     const border = btype(sx, sy), borderWall = border === 'trees' ? TILE.TREE : TILE.ROCK;
     const sceneryLinks = [];
@@ -880,11 +840,7 @@ function generate(inp){
           if (a < 0 || a >= N) continue;
           const { lx, ly } = cell(d, a), i = ly*N + lx, isPath = a >= k.pos - k.lo && a <= k.pos + k.hi;
           if (T[i] === TILE.WATER){ if (isPath && a >= k.pos - 1 && a <= k.pos + 1 && RV[i]) { T[i] = TILE.BRIDGE; trail[i] = 1; } }
-          else if (isCliffish(T[i]) || T[i] === TILE.STAIRS || T[i] === TILE.SIDE_STAIRS){
-            const across = side <= 1 ? (F[i] === FACE.E || F[i] === FACE.W) : (F[i] === FACE.N || F[i] === FACE.S);
-            if (isPath && across){ T[i] = stairsFor(F[i]); trail[i] = 1; }
-            else if (isPath){ T[i] = k.wild ? TILE.OPEN : TILE.PATH; trail[i] = 1; }   // rare: a cliff along the approach is levelled so the seam stays open
-          }
+          else if (T[i] === TILE.CLIFF){ /* approaches are levelled region-wide; a leftover cliff is reported by the checks */ }
           else if (isPath){ T[i] = k.wild ? TILE.OPEN : TILE.PATH; trail[i] = 1; }
           else T[i] = TILE.VERGE;
           if (d < BAND) protectedMask[i] = 1;
@@ -904,10 +860,9 @@ function generate(inp){
       }
     }
 
-    const sSq = seeds.square(sx, sy), sNoise = hash32(sSq, strHash('noise')), sWay = hash32(sSq, strHash('waypoints'));
+    const sSq = attempt ? seeds.attempt(seeds.square(sx, sy), attempt) : seeds.square(sx, sy), sNoise = hash32(sSq, strHash('noise')), sWay = hash32(sSq, strHash('waypoints'));
     const rSq = mulberry32(hash32(sSq, strHash('content')));
     const roadTiles = roadTilesFor(sx, sy);
-    const mpt = (inp.kmPerSquare || 1)*1000/N;
     const used = new Uint8Array(N*N);
     const tileCost = (lx, ly) => {
       const i = ly*N + lx, gx = sx*N + lx, gy = sy*N + ly;
@@ -915,8 +870,7 @@ function generate(inp){
       let c = PROFILE[K[i]].cost;
       if (sampler.isPeak(gx, gy)) c = COST.peak;
       if (isWall(T[i])) c += 1;
-      if (isCliffish(T[i])) c += COST.cliff;
-      if (CN[i]) c += COST.corner;
+      if (isCliffish(T[i])) return Infinity;      // cliffs are crossed only by placed flights
       const ex = sampler.elev(gx + 1, gy) - sampler.elev(gx - 1, gy), ey = sampler.elev(gx, gy + 1) - sampler.elev(gx, gy - 1);
       const slope = Math.min(1, Math.hypot(ex, ey)/(2*mpt)/0.3);
       c *= (1 + COST.slopeK*slope)*(1 + COST.noiseM*(wild ? WILD.extraNoise : 1)*smoothNoise(sNoise, gx, gy, COST.noiseScale));
@@ -1003,6 +957,137 @@ function generate(inp){
         if (best){ junction = { lx:best.lx, ly:best.ly }; junctionSource = 'road intersection'; }
       }
       junction.lx = Math.min(hi, Math.max(lo, junction.lx)); junction.ly = Math.min(hi, Math.max(lo, junction.ly));
+      // the junction must stand on ground (not a cliff or water): nearest interior ground tile
+      if (T[junction.ly*N + junction.lx] === TILE.CLIFF || T[junction.ly*N + junction.lx] === TILE.WATER){
+        let best = null;
+        for (let y = lo; y <= hi; y++) for (let x = lo; x <= hi; x++){ const t = T[y*N + x]; if (t === TILE.CLIFF || t === TILE.WATER) continue;
+          const d = Math.abs(x - junction.lx) + Math.abs(y - junction.ly); if (!best || d < best.d) best = { d, x, y }; }
+        if (best){ junction = { lx:best.x, ly:best.y }; junctionSource += ', moved off a cliff or water'; }
+      }
+    }
+
+    // --- Relief objects: stair flights (proto-6) ---
+    // A flight is one prefab: straight, on a straight cliff segment, set into the cliff with cliff on both flanks for every
+    // row, the full depth of the cliff, and 2 clear tiles of ground straight out at both ends (its landings). Nothing is
+    // ever patched: a flight is placed whole or not at all, and every tile it uses is claimed in the reservation grid.
+    // A plateau graph picks the fewest flights that join everything the route needs, then extras by what they add, up to
+    // 1 flight per 100 walkable tiles (cap 8, or 12 on rugged ground).
+    const RES = new Uint8Array(N*N);                 // 0 free · 1 stair · 2 landing · 3 ledge
+    const flightList = [];
+    const plan = ATTEMPTS[Math.min(attempt, ATTEMPTS.length - 1)];
+    const isLand = i => T[i] !== TILE.WATER && T[i] !== TILE.CLIFF && !LEDGE_DIR[T[i]] && T[i] !== TILE.LEDGE_CORNER;
+    // plateaus: interior ground at one level; water joins whatever it touches (Surf)
+    const pid = new Int32Array(N*N).fill(-1), pSize = [];
+    for (let i0 = 0; i0 < N*N; i0++){
+      const x0 = i0 % N, y0 = (i0/N) | 0;
+      if (pid[i0] >= 0 || !inInterior(x0, y0) || T[i0] === TILE.CLIFF) continue;
+      const id = pSize.length, q = [i0]; pid[i0] = id; let n = 0;
+      while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0; if (T[c] !== TILE.WATER) n++;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = x + dx, ny = y + dy; if (!inInterior(nx, ny)) continue;
+          const ni = ny*N + nx; if (pid[ni] >= 0 || T[ni] === TILE.CLIFF) continue;
+          if (T[c] === TILE.WATER || T[ni] === TILE.WATER || L[ni] === L[c]){ pid[ni] = id; q.push(ni); } } }
+      pSize.push(n);
+    }
+    const widthFor = c => STAIR_WIDTH[c] || 2;
+    const FV = { [FACE.S]:[0, 1], [FACE.N]:[0, -1], [FACE.E]:[1, 0], [FACE.W]:[-1, 0] };
+    const cands = [];
+    const at = (x, y) => (x >= 0 && y >= 0 && x < N && y < N) ? y*N + x : -1;
+    for (let y = lo; y <= hi; y++) for (let x = lo; x <= hi; x++){
+      const e = y*N + x; if (T[e] !== TILE.CLIFF || F[e] === FACE.NONE || D[e] !== 1) continue;   // an edge tile of a straight face
+      const f = F[e], [dx, dy] = FV[f], ax = dy ? 1 : 0, ay = dy ? 0 : 1;   // dx,dy: downhill · ax,ay: along the cliff
+      const wl = widthFor(K[e]);
+      for (let w = wl; w >= 1; w--){
+        const cols = []; let ok = true, dep = -1;
+        for (let u = 0; u < w && ok; u++){
+          const cx = x + ax*u, cy = y + ay*u, c0 = at(cx, cy);
+          if (c0 < 0 || T[c0] !== TILE.CLIFF || F[c0] !== f || D[c0] !== 1){ ok = false; break; }
+          const col = [c0]; let k = 1;
+          while (true){ const j = at(cx - dx*k, cy - dy*k); if (j < 0 || T[j] !== TILE.CLIFF || F[j] !== f) break; col.push(j); k++; }
+          if (dep < 0) dep = col.length; else if (col.length !== dep){ ok = false; break; }
+          if (dep > 6){ ok = false; break; }
+          cols.push({ cx, cy, col });
+        }
+        if (!ok) continue;
+        const tilesF = cols.flatMap(c => c.col), land = [];
+        // flanks: straight cliff of the same face beside every row (never a corner, never the end of a segment)
+        for (const u of [-1, w]) for (let r = 0; r < dep && ok; r++){
+          const j = at(x + ax*u - dx*r, y + ay*u - dy*r); if (j < 0 || T[j] !== TILE.CLIFF || F[j] !== f || corner[j]) ok = false; }
+        if (!ok) continue;
+        let lowLev = null, highLev = null;
+        for (const c of cols) for (const [sgn, base] of [[1, 0], [-1, dep - 1]]){
+          for (let k = 1; k <= 2 && ok; k++){
+            const lx = c.cx + sgn*dx*(sgn > 0 ? k : base + k), ly = c.cy + sgn*dy*(sgn > 0 ? k : base + k), j = at(lx, ly);
+            if (j < 0 || !inInterior(lx, ly) || !isLand(j) || RES[j] === 1){ ok = false; break; }
+            if (sgn > 0){ if (lowLev === null) lowLev = L[j]; else if (L[j] !== lowLev) ok = false; }
+            else { if (highLev === null) highLev = L[j]; else if (L[j] !== highLev) ok = false; }
+            land.push(j);
+          }
+        }
+        if (!ok || highLev <= lowLev || tilesF.some(j => !inInterior(j % N, (j/N) | 0))) continue;
+        const lowP = pid[at(x + dx, y + dy)], highP = pid[at(x - dx*dep, y - dy*dep)];
+        if (lowP < 0 || highP < 0 || lowP === highP) continue;
+        cands.push({ f, w, dep, tiles:tilesF, land, lowP, highP, x, y, cls:K[e], preferred:w === wl });
+      }
+    }
+    // spacing: no other flight within `gap` tiles (Emerald: median 8 tiles apart). The knight's-move rule (gap 1) is the
+    // hard minimum; a required crossing falls back to it only when no well-spaced site exists.
+    const fits = (c, gap = STAIRS.gap) => c.tiles.every(j => RES[j] === 0) && c.land.every(j => RES[j] !== 1) &&
+      c.tiles.every(j => { const x = j % N, y = (j/N) | 0;
+        for (let dy = -gap; dy <= gap; dy++) for (let dx = -gap; dx <= gap; dx++){ const k = at(x + dx, y + dy); if (k >= 0 && RES[k] === 1) return false; }
+        return true; }) &&
+      c.land.every(j => { const x = j % N, y = (j/N) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const k = at(x + dx, y + dy); if (k >= 0 && RES[k] === 1 && !c.tiles.includes(k)) return false; }
+        return true; });
+    const uf = pSize.map((_, i) => i), ufFind = a => { while (uf[a] !== a){ uf[a] = uf[uf[a]]; a = uf[a]; } return a; };
+    const place = c => { const id = flightList.length;
+      for (const j of c.tiles){ RES[j] = 1; T[j] = stairsFor(c.f); }
+      for (const j of c.land){ if (!RES[j]) RES[j] = 2; if (isWall(T[j])) T[j] = TILE.OPEN; }
+      uf[ufFind(c.lowP)] = ufFind(c.highP);
+      flightList.push({ id, face:c.f, width:c.w, depth:c.dep, tiles:c.tiles, land:c.land, x:c.x, y:c.y,
+                        style:(CROSSING[c.cls] || { style:'stone' }).style, why:c.why }); };
+    const rSt = mulberry32(hash32(sSq, strHash('stairs')));
+    const reqP = [...new Set(ports.map(p => pid[p.gate.ly*N + p.gate.lx]).concat(junction ? [pid[junction.ly*N + junction.lx]] : []))].filter(p => p >= 0);
+    const planIssues = [];
+    // 1. required: join the plateaus of every port (and the junction) with the fewest flights (BFS over plateaus)
+    for (let guard = 0; guard < 20; guard++){
+      const root = reqP.length ? ufFind(reqP[0]) : -1;
+      const missing = reqP.filter(p => ufFind(p) !== root); if (!missing.length) break;
+      const adj = new Map();
+      for (const c of cands){ if (!fits(c, 1)) continue; const a = ufFind(c.lowP), b = ufFind(c.highP); if (a === b) continue;
+        for (const [p, q] of [[a, b], [b, a]]){ if (!adj.has(p)) adj.set(p, []); adj.get(p).push([q, c]); } }
+      const prev = new Map([[root, null]]), queue = [root]; let goal = -1;
+      const wanted = new Set(missing.map(ufFind));
+      while (queue.length && goal < 0){ const p = queue.shift();
+        for (const [q, c] of (adj.get(p) || [])) if (!prev.has(q)){ prev.set(q, [p, c]); if (wanted.has(q)){ goal = q; break; } queue.push(q); } }
+      if (goal < 0){ planIssues.push(`PLAN: no stair site joins the plateau of a port or the junction`); break; }
+      const steps = []; for (let q = goal; prev.get(q); q = prev.get(q)[0]) steps.push(prev.get(q));
+      for (const [p, cFirst] of steps.reverse()){
+        // among all fitting sites between these two plateau groups, prefer the land-cover width, then a seeded pick
+        const a = ufFind(cFirst.lowP), b = ufFind(cFirst.highP);
+        const near = cands.filter(c => fits(c, 1) && ((ufFind(c.lowP) === a && ufFind(c.highP) === b) || (ufFind(c.lowP) === b && ufFind(c.highP) === a)));
+        const spaced = near.filter(c => fits(c)), opts = spaced.length ? spaced : near;
+        const pref = opts.filter(c => c.preferred), pool = pref.length ? pref : opts;
+        const c = pool[Math.floor(rSt()*pool.length)] || cFirst; c.why = 'required'; place(c);
+      }
+    }
+    sLog.push(`stair sites: ${cands.length} (${cands.filter(fits).length} still free)`);
+    // 2. extras, scored by what they add: a new plateau to explore (more for a bigger one), else a loop
+    let walkable = 0; for (let i = 0; i < N*N; i++) if (T[i] !== TILE.WATER && T[i] !== TILE.CLIFF && !isWall(T[i])) walkable++;
+    const ruggedVal = squareRugged(sx, sy), ruggedSq = ruggedVal >= RELIEF.ruggedMin;
+    const target = Math.min(ruggedSq ? STAIRS.capRugged : STAIRS.cap, Math.round(walkable*STAIRS.per100/100)*plan.extras);
+    for (let guard = 0; flightList.length < target && guard < 40; guard++){
+      const root = reqP.length ? ufFind(reqP[0]) : -1;
+      let best = null, bestS = -Infinity;
+      for (const c of cands){ if (!fits(c)) continue;
+        const a = ufFind(c.lowP), b = ufFind(c.highP), joinsNew = (a === root) !== (b === root);
+        const other = a === root ? c.highP : c.lowP;
+        let s = (joinsNew ? 2 + Math.min(1, pSize[other]/150) : a === b ? 0.8 : 1) - (c.preferred ? 0 : 0.3);
+        if (pSize[c.lowP] < 12 || pSize[c.highP] < 12) s -= 2;            // not worth a flight
+        for (const fl of flightList) if (Math.abs(fl.x - c.x) + Math.abs(fl.y - c.y) < 5) s -= 0.4;   // spread them out
+        s += 0.5*rSt();
+        if (s > bestS){ bestS = s; best = c; } }
+      if (!best || bestS < 0) break;
+      best.why = 'extra'; place(best);
     }
     const legs = [];
     if (ports.length === 2){ const r = routeVia(ports[0].gate, ports[1].gate, hash32(sWay, 0)); legs.push({ ends:[0, 1], pts:r && r.pts, waypoints:r ? r.waypoints : 0 }); }
@@ -1023,36 +1108,12 @@ function generate(inp){
         if (!inPath && !inVerge) continue;
         if (T[i] === TILE.WATER){ if (inPath && d <= 1.5 && RV[i]){ T[i] = TILE.BRIDGE; if (kind === 'main') trail[i] = 1; } continue; }
         if (T[i] === TILE.BRIDGE || T[i] === TILE.STAIRS || T[i] === TILE.SIDE_STAIRS){ if (inPath && kind === 'main') trail[i] = 1; continue; }
-        if (isCliffish(T[i])) continue;              // stamps never touch cliffs; stairFlight() cuts the crossing itself
+        if (isCliffish(T[i])) continue;              // stamps never touch cliffs; only placed flights cross them
         if (inPath){
           if (kind === 'main'){ T[i] = wild ? TILE.OPEN : TILE.PATH; trail[i] = 1; }
           else if (!isPathish(T[i]) && !trail[i]) T[i] = TILE.OPEN;
         } else if (!isPathish(T[i]) && !trail[i]) T[i] = kind === 'main' ? TILE.VERGE : (isWall(T[i]) ? TILE.OPEN : T[i]);
       }
-    };
-    // where a route's centre line meets a cliff: one straight flight across the route's width, along the cliff and
-    // through both rows of a tall face (so stairs never run along a cliff or meet diagonally)
-    const stairFlight = (cx, cy, w, kind) => {
-      const i0 = cy*N + cx; if (!isCliffish(T[i0]) || F[i0] === FACE.NONE) return false;
-      const f = F[i0], ax = f === FACE.S || f === FACE.N ? 1 : 0, ay = 1 - ax;
-      const [ddx, ddy] = [[0, 1], [0, -1], [1, 0], [-1, 0]][[FACE.S, FACE.N, FACE.E, FACE.W].indexOf(f)];   // downhill
-      const sameFace = (x, y) => inInterior(x, y) && (isCliffish(T[y*N + x]) || T[y*N + x] === TILE.STAIRS || T[y*N + x] === TILE.SIDE_STAIRS) && F[y*N + x] === f;
-      const ground = (x, y) => inInterior(x, y) && T[y*N + x] !== TILE.WATER && !isCliffish(T[y*N + x]);
-      const a = (w - 1) >> 1, b = w - 1 - a, cols = [];
-      for (let u = -a; u <= b; u++){
-        const x0 = cx + ax*u, y0 = cy + ay*u; if (!sameFace(x0, y0)) continue;
-        const col = [y0*N + x0]; let x = x0 + ddx, y = y0 + ddy, n = 0;
-        while (sameFace(x, y) && n++ < 6){ col.push(y*N + x); x += ddx; y += ddy; }
-        const low = ground(x, y) ? y*N + x : -1;
-        x = x0 - ddx; y = y0 - ddy; n = 0;
-        while (sameFace(x, y) && n++ < 6){ col.push(y*N + x); x -= ddx; y -= ddy; }
-        const high = ground(x, y) ? y*N + x : -1;
-        if (low < 0 || high < 0) continue;            // no ground at an end: this column can't be stairs
-        cols.push({ col, low, high });
-      }
-      for (const c of cols){ for (const i of c.col){ T[i] = stairsFor(f); if (kind === 'main') trail[i] = 1; }
-        for (const l of [c.low, c.high]) if (isWall(T[l])) T[l] = kind === 'main' ? (wild ? TILE.OPEN : TILE.PATH) : TILE.OPEN; }
-      return cols.length > 0;
     };
     let waypointCount = 0;
     const mainPts = [];
@@ -1068,8 +1129,8 @@ function generate(inp){
         let { p, v } = sm[i];
         const blend = (k2, dist) => { if (k2 && dist < 7){ const u = dist/7; p = k2.path*(1 - u) + p*u; v = k2.verge*(1 - u) + v*u; } };
         blend(startK, i); blend(endK, n - 1 - i);
-        if (wild){ carveDisc(q.lx, q.ly, WILD.path, WILD.verge, 'main'); stairFlight(q.lx, q.ly, WILD.path, 'main'); return; }
-        const w = clampWidth(p, v); carveDisc(q.lx, q.ly, w.p, w.v, 'main'); stairFlight(q.lx, q.ly, w.p, 'main');
+        if (wild){ carveDisc(q.lx, q.ly, WILD.path, WILD.verge, 'main'); return; }
+        const w = clampWidth(p, v); carveDisc(q.lx, q.ly, w.p, w.v, 'main');
       });
     }
     // soften the verge's outer edge: lone wall notches open up, verge tiles boxed in by walls grow back
@@ -1107,7 +1168,7 @@ function generate(inp){
           if (x >= 0 && y >= 0 && x < N && y < N && (trail[y*N + x] || isPathish(T[y*N + x]))){ clear = false; break; } }
         if (!clear) continue;
         for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++){ const x = cx + dx, y = cy + dy; if (!inInterior(x, y)) continue;
-          const i = y*N + x; if (Math.hypot(dx, dy) + 0.8*(smoothNoise(sRag, sx*N + x, sy*N + y, 2) - 0.5) <= rad && !isCliffish(T[i])) T[i] = TILE.WATER; }
+          const i = y*N + x; if (Math.hypot(dx, dy) + 0.8*(smoothNoise(sRag, sx*N + x, sy*N + y, 2) - 0.5) <= rad && !isCliffish(T[i]) && !RES[i]) T[i] = TILE.WATER; }
         content.ponds++;
       } }
     // reachability helpers (one-way ledges understood)
@@ -1170,10 +1231,10 @@ function generate(inp){
         if (!best) break;
         const type = rSq() < CONTENT.gapShare ? 'gap' : 'trail';
         const spurCost = (lx, ly) => { const i = ly*N + lx; if (T[i] === TILE.WATER) return RV[i] ? 6 : COST.surf;
-          if (isCliffish(T[i])) return 4; if (isWall(T[i])) return 3; return 1; };
+          if (isCliffish(T[i])) return Infinity; if (isWall(T[i])) return 3; return 1; };
         const pts = astar(best.from, best.to, spurCost);
         if (!pts) break;
-        for (const q of pts){ carveDisc(q.lx, q.ly, type === 'gap' ? 1 : 2, 0, 'side'); stairFlight(q.lx, q.ly, type === 'gap' ? 1 : 2, 'side'); }
+        for (const q of pts){ carveDisc(q.lx, q.ly, type === 'gap' ? 1 : 2, 0, 'side'); }
         content.spurs[type]++;
       }
       // loops: a second, natural way between two far-apart points of the route
@@ -1187,31 +1248,71 @@ function generate(inp){
         }
         if (pair){
           const loopCost = (lx, ly) => { const i = ly*N + lx; if (trail[i]) return 8; if (T[i] === TILE.WATER) return RV[i] ? 6 : COST.surf;
-            if (isCliffish(T[i])) return 4; if (isWall(T[i])) return 2.5; return 1 + smoothNoise(sNoise, sx*N + lx + 99, sy*N + ly, 3); };
+            if (isCliffish(T[i])) return Infinity; if (isWall(T[i])) return 2.5; return 1 + smoothNoise(sNoise, sx*N + lx + 99, sy*N + ly, 3); };
           const lp = astar(pair[0], pair[1], loopCost);
-          if (lp){ for (const q of lp){ carveDisc(q.lx, q.ly, 2, 0, 'side'); stairFlight(q.lx, q.ly, 2, 'side'); } content.loops++; }
+          if (lp){ for (const q of lp){ carveDisc(q.lx, q.ly, 2, 0, 'side'); } content.loops++; }
         }
       }
     }
-    // knight's-move rule: stair flights on different cliffs may not touch diagonally (the cliff needs room to turn).
-    // An off-route stair tile in a diagonal clash goes back to cliff; if both are on the route, the gap between them
-    // is filled with stairs so they become one flight.
-    for (let pass = 0; pass < 4; pass++){
-      const fl = new Int16Array(N*N).fill(-1); let nf = 0; const isSt = t => t === TILE.STAIRS || t === TILE.SIDE_STAIRS;
-      for (let i0 = 0; i0 < N*N; i0++){ if (!isSt(T[i0]) || fl[i0] >= 0) continue; const q = [i0]; fl[i0] = nf;
-        while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0;
-          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-            const ni = ny*N + nx; if (isSt(T[ni]) && fl[ni] < 0){ fl[ni] = nf; q.push(ni); } } }
-        nf++; }
-      let fixed = 0;
-      for (let i = 0; i < N*N; i++){ if (fl[i] < 0) continue; const x = i % N, y = (i/N) | 0;
-        for (const [dx, dy] of [[1, 1], [-1, 1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-          const j = ny*N + nx; if (fl[j] < 0 || fl[j] === fl[i] || !isSt(T[i]) || !isSt(T[j])) continue;
-          const victim = !trail[j] ? j : !trail[i] ? i : -1;
-          if (victim >= 0 && !protectedMask[victim]){ T[victim] = F[victim] !== FACE.NONE ? TILE.CLIFF : TILE.ROCK; fixed++; }
-          else for (const k2 of [y*N + nx, ny*N + x]) if (isCliffish(T[k2]) && !protectedMask[k2]){ T[k2] = stairsFor(F[k2]); fixed++; }
-        } }
-      if (!fixed) break;
+    // --- Ledges (proto-6): their own layer, on flat ground within one terrace ---
+    // Straight runs (3+ tiles) facing S (59%), W (24%) or E (17%) as in Emerald, sometimes with a right-angle turn (a ledge
+    // corner, which can't be jumped). Never on the route, never within a tile of a cliff, stairs or a landing, usually with
+    // one end against trees or rock. Density by land cover (Emerald's routes). Each run is placed whole and kept only if
+    // the top is reachable, every required place stays reachable both ways and nothing traps the player.
+    const required = ports.map(p => ({ name:`port ${'EWSN'[p.side]}`, i:p.edgeTile.ly*N + p.edgeTile.lx, gate:p.gate }));
+    if (junction) required.push({ name:'junction', i:junction.ly*N + junction.lx, gate:junction });
+    const reqOk = () => { if (!required.length) return { ok:true }; const fw = flood(required[0].i, false), bw = flood(required[0].i, true);
+      let traps = 0; for (let i = 0; i < N*N; i++) if (fw[i] && !bw[i]) traps++;
+      return { ok:required.every(r => fw[r.i] && bw[r.i]) && !traps, fw }; };
+    let ledgeRuns = 0, ledgeTilesPlaced = 0;
+    if (plan.ledges > 0 && required.length && reqOk().ok){
+      const fw0 = flood(required[0].i, false), byCls = new Float64Array(NCLS), pool = [];
+      for (let i = 0; i < N*N; i++) if (fw0[i] && WALKABLE[T[i]]){ byCls[K[i]]++; if ((T[i] === TILE.OPEN || T[i] === TILE.VERGE) && !trail[i]) pool.push(i); }
+      let want = 0; for (let c = 0; c < NCLS; c++) want += byCls[c]*(LEDGES.density[c] || 0)/100;
+      want *= plan.ledges;
+      const rL = mulberry32(hash32(sSq, strHash('ledges')));
+      const ledgeOf = f => f === FACE.S ? TILE.LEDGE_S : f === FACE.E ? TILE.LEDGE_E : TILE.LEDGE_W;
+      const clearAround = j => { const x = j % N, y = (j/N) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){ const k = at(x + dx, y + dy); if (k < 0) return false;
+          const t = T[k]; if (t === TILE.CLIFF || t === TILE.STAIRS || t === TILE.SIDE_STAIRS || RES[k] === 1 || RES[k] === 2) return false;
+          if ((LEDGE_DIR[t] || t === TILE.LEDGE_CORNER) && RES[k] === 3) return false; }
+        return true; };
+      const groundOk = j => j >= 0 && inInterior(j % N, (j/N) | 0) && (T[j] === TILE.OPEN || T[j] === TILE.VERGE) && !trail[j] && RES[j] === 0 && clearAround(j);
+      const sideOk = (j, lv) => j >= 0 && WALKABLE[T[j]] && T[j] !== TILE.STAIRS && T[j] !== TILE.SIDE_STAIRS && L[j] === lv;
+      // one straight segment: tiles along the line, each with its take-off (uphill) and landing (downhill) tiles
+      const segment = (x, y, f, n) => {
+        const [dx, dy] = FV[f], ax = dy ? 1 : 0, ay = dy ? 0 : 1, lv = L[y*N + x], out = [];
+        for (let u = 0; u < n; u++){ const tx = x + ax*u, ty = y + ay*u, j = at(tx, ty);
+          if (!groundOk(j) || L[j] !== lv || !sideOk(at(tx - dx, ty - dy), lv) || !sideOk(at(tx + dx, ty + dy), lv)) return null;
+          out.push(j); }
+        return { tiles:out, ends:[at(x - ax, y - ay), at(x + ax*n, y + ay*n)], ax, ay };
+      };
+      for (let tries = 0; tries < LEDGES.tries && ledgeTilesPlaced < want && pool.length; tries++){
+        const s0 = pool[Math.floor(rL()*pool.length)], x = s0 % N, y = (s0/N) | 0, r = rL();
+        const f = r < 0.59 ? FACE.S : r < 0.83 ? FACE.W : FACE.E;
+        const n = 3 + Math.floor(rL()*rL()*LEDGES.maxExtra);              // 3+ tiles, most 3–6, a few long ones
+        const seg = segment(x, y, f, n); if (!seg) continue;
+        const wallEnds = seg.ends.filter(j => j >= 0 && isWall(T[j])).length;
+        if (!wallEnds && rL() >= LEDGES.openBothEnds) continue;          // usually one end against trees or rock
+        const placed = seg.tiles.map(j => [j, ledgeOf(f)]);
+        // a right-angle turn (S runs only): a ledge corner at an open end, then a W/E ledge running back uphill
+        if (f === FACE.S && rL() < LEDGES.turnChance){
+          const endIdx = seg.ends.findIndex(j => j >= 0 && !isWall(T[j]));
+          if (endIdx >= 0){
+            const cj = seg.ends[endIdx], cx = cj % N, cy = (cj/N) | 0, fT = endIdx ? FACE.E : FACE.W;
+            const m = 2 + Math.floor(rL()*3);
+            const up = []; let ok2 = groundOk(cj) && L[cj] === L[s0];
+            for (let k = 1; k <= m && ok2; k++){ const j = at(cx, cy - k), [ddx] = FV[fT];
+              if (!groundOk(j) || L[j] !== L[s0] || !sideOk(at(cx - ddx, cy - k), L[s0]) || !sideOk(at(cx + ddx, cy - k), L[s0])) ok2 = false; else up.push(j); }
+            if (ok2){ placed.push([cj, TILE.LEDGE_CORNER]); for (const j of up) placed.push([j, ledgeOf(fT)]); }
+          }
+        }
+        const old = placed.map(([j]) => [j, T[j]]);
+        for (const [j, t] of placed){ T[j] = t; RES[j] = 3; }
+        const chk = reqOk(), top = at(x - FV[f][0], y - FV[f][1]);
+        if (!chk.ok || !chk.fw[top]){ for (const [j, t] of old){ T[j] = t; RES[j] = 0; } continue; }
+        ledgeRuns++; ledgeTilesPlaced += placed.filter(([, t]) => t !== TILE.LEDGE_CORNER).length;
+      }
     }
 
     // tall grass (long grass in wetland) on open ground and verges, off the route; position-keyed so seams match
@@ -1220,38 +1321,15 @@ function generate(inp){
       if (grassAt(sx*N + lx, sy*N + ly, K[i])) T[i] = K[i] === CLS.WETLAND ? TILE.LONG_GRASS : TILE.TALL_GRASS;
     }
 
-    // landings, last check after all content: a flight whose end got covered by trees or rock gets that tile cleared;
-    // one that ends in water or against a cliff (and isn't the route's) goes back to cliff
-    { const seenF = new Uint8Array(N*N);
-      for (let i0 = 0; i0 < N*N; i0++){
-        const typ = T[i0]; if ((typ !== TILE.STAIRS && typ !== TILE.SIDE_STAIRS) || seenF[i0]) continue;
-        const list = [i0], q = [i0]; seenF[i0] = 1;
-        while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0;
-          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue; const ni = ny*N + nx;
-            if (T[ni] === typ && !seenF[ni]){ seenF[ni] = 1; list.push(ni); q.push(ni); } } }
-        const ends = typ === TILE.STAIRS ? [[0, -1], [0, 1]] : [[-1, 0], [1, 0]];
-        let dead = false; const clear = [];
-        for (const c of list){ const x = c % N, y = (c/N) | 0;
-          for (const [dx, dy] of ends){ let nx = x + dx, ny = y + dy;
-            while (nx >= 0 && ny >= 0 && nx < N && ny < N && T[ny*N + nx] === typ){ nx += dx; ny += dy; }
-            if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-            const e = ny*N + nx; if (WALKABLE[T[e]]) continue;
-            if (isWall(T[e])) clear.push(e); else dead = true; } }
-        if (dead && !list.some(i => trail[i])) for (const i of list) T[i] = TILE.CLIFF;
-        else for (const e of clear) T[e] = TILE.OPEN;
-      } }
-
-    // --- 7. Reachability with one-way ledges, trap removal, repair ---
-    const required = ports.map(p => ({ name:`port ${'EWSN'[p.side]}`, i:p.edgeTile.ly*N + p.edgeTile.lx, gate:p.gate }));
-    if (junction) required.push({ name:'junction', i:junction.ly*N + junction.lx, gate:junction });
+    // --- 7. Reachability with one-way ledges, and repair (a repair only carves through walls on one level) ---
     let repairs = 0, fallback = false, trapFixes = 0;
     const repairCost = (lx, ly) => { const i = ly*N + lx;
       if (T[i] === TILE.WATER) return RV[i] ? COST.repairRiver : COST.surf;
-      if (isCliffish(T[i])) return COST.repairWall;
+      if (isCliffish(T[i])) return Infinity;
       return isWall(T[i]) ? COST.repairWall*(sampler.isPeak(sx*N + lx, sy*N + ly) ? 2 : 1) : 1; };
     const ok = () => { if (required.length < 2) return true; const fw = flood(required[0].i, false), bw = flood(required[0].i, true);
       return required.every(r => fw[r.i] && bw[r.i]); };
-    for (let attempt = 0; attempt < 3 && !ok(); attempt++){
+    for (let tryN = 0; tryN < 3 && !ok(); tryN++){
       const fw = flood(required[0].i, false), bw = flood(required[0].i, true);
       for (const m of required.filter(r => !(fw[r.i] && bw[r.i]))){
         let target = null, bd = Infinity;
@@ -1259,57 +1337,11 @@ function generate(inp){
           const d = Math.abs(x - m.gate.lx) + Math.abs(y - m.gate.ly); if (d < bd){ bd = d; target = { lx:x, ly:y }; } }
         if (!target) target = required[0].gate;
         const pts = astar(m.gate, target, repairCost);
-        if (pts){ for (const q of pts){ carveDisc(q.lx, q.ly, 3, 0, 'main'); stairFlight(q.lx, q.ly, 3, 'main'); } repairs++; sLog.push(`repair ${repairs}: carved a 3-wide corridor from ${m.name} (${pts.length} tiles)`); }
+        if (pts){ for (const q of pts){ carveDisc(q.lx, q.ly, 3, 0, 'main'); } repairs++; sLog.push(`repair ${repairs}: carved a 3-wide corridor from ${m.name} (${pts.length} tiles)`); }
       }
-    }
-    if (!ok() && required.length > 1){
-      fallback = true; const c = { lx:Math.round(N/2), ly:Math.round(N/2) };
-      const force = (cx, cy) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){ const x = cx + dx, y = cy + dy;
-        if (!inInterior(x, y)) continue; const i = y*N + x; trail[i] = 1;
-        if (T[i] === TILE.WATER){ if (RV[i]) T[i] = TILE.BRIDGE; }
-        else if (isCliffish(T[i])) T[i] = stairsFor(F[i]); else if (!isPathish(T[i])) T[i] = wild ? TILE.OPEN : TILE.PATH; } };
-      for (const r of required){ const g = r.gate;
-        for (let x = Math.min(g.lx, c.lx); x <= Math.max(g.lx, c.lx); x++) force(x, g.ly);
-        for (let y = Math.min(g.ly, c.ly); y <= Math.max(g.ly, c.ly); y++) force(c.lx, y); }
-      sLog.push('fallback network used: straight corridors through the square centre');
     }
     let fw = required.length ? flood(required[0].i, false) : null, bw = required.length ? flood(required[0].i, true) : null;
-    for (let it = 0; fw && it < 12; it++){
-      let changed = 0;
-      for (let i = 0; i < N*N; i++){
-        const ld = LEDGE_DIR[T[i]]; if (!ld) continue;
-        const x = i % N, y = (i/N) | 0, fx = x + ld[0], fy = y + ld[1]; if (fx < 0 || fy < 0 || fx >= N || fy >= N) continue;
-        const land = fy*N + fx;
-        if (fw[land] && !bw[land]){ T[i] = TILE.OPEN; changed++; }   // a walk-around gap, as ledge lines have in the games
-      }
-      if (!changed) break;
-      trapFixes += changed; fw = flood(required[0].i, false); bw = flood(required[0].i, true);
-    }
-    if (trapFixes) sLog.push(`${trapFixes} ledge tile(s) opened into walk-around gaps so nothing traps the player`);
-    // nothing invites the player where they can't go: ledges whose top can't be reached (on the edge of, or inside, an
-    // area the player can't enter) become plain cliff, whole ledge line at a time (so a line is never half ledge)
-    let ledgesHidden = 0;
-    if (fw){
-      const seenL = new Uint8Array(N*N), ledgeT = t => LEDGE_DIR[t] || t === TILE.LEDGE_CORNER;
-      for (let i0 = 0; i0 < N*N; i0++){
-        if (!ledgeT(T[i0]) || seenL[i0]) continue;
-        const list = [i0], q = [i0]; seenL[i0] = 1;
-        while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0;
-          for (const [dx, dy] of DIRS){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue; const ni = ny*N + nx;
-            if (ledgeT(T[ni]) && !seenL[ni]){ seenL[ni] = 1; list.push(ni); q.push(ni); } } }
-        const unreachableTop = list.some(i => { const d = LEDGE_DIR[T[i]]; if (!d) return false; const x = i % N - d[0], y = ((i/N) | 0) - d[1];
-          return x >= 0 && y >= 0 && x < N && y < N && !fw[y*N + x]; });
-        if (unreachableTop){ for (const i of list) T[i] = TILE.CLIFF; ledgesHidden += list.length; }
-      }
-      // stairs with no reachable end are just as misleading: back to cliff
-      for (let i = 0; i < N*N; i++){
-        if (T[i] !== TILE.STAIRS && T[i] !== TILE.SIDE_STAIRS) continue;
-        const x = i % N, y = (i/N) | 0;
-        if (!DIRS.some(([dx, dy]) => { const nx = x + dx, ny = y + dy; return nx >= 0 && ny >= 0 && nx < N && ny < N && fw[ny*N + nx] && WALKABLE[T[ny*N + nx]]; })
-            && !fw[i]) T[i] = TILE.CLIFF;
-      }
-    }
-    if (ledgesHidden) sLog.push(`${ledgesHidden} ledge tile(s) around unreachable ground turned to cliff`);
+    const ledgesHidden = 0;
     let traps = 0; if (fw) for (let i = 0; i < N*N; i++) if (fw[i] && !bw[i]) traps++;
     const unreachable = fw ? required.filter(r => !(fw[r.i] && bw[r.i])).map(r => r.name) : [];
 
@@ -1324,50 +1356,65 @@ function generate(inp){
       if (LEDGE_DIR[t]) ledges++; if (t === TILE.STAIRS || t === TILE.SIDE_STAIRS) stairs++; if (t === TILE.CLIFF) cliffs++; if (t === TILE.BRIDGE) bridges++;
     }
     content.pockets = content.pockets.filter(p => fw && fw[p.ly*N + p.lx]).length + ' reachable of ' + content.pockets.length;
-    // stair looks: each connected flight gets one style (so different colours never touch); flights in the seam band
-    // use the shared General tiles (stone); others take the style of the land cover around them
-    const stairStyle = new Uint8Array(N*N), flightOf = new Int16Array(N*N).fill(-1), isSt = t => t === TILE.STAIRS || t === TILE.SIDE_STAIRS;
-    let flights = 0, diagStairConflicts = 0;
-    for (let i0 = 0; i0 < N*N; i0++){
-      if (!isSt(T[i0]) || flightOf[i0] >= 0) continue;
-      const list = [i0], q = [i0]; flightOf[i0] = flights;
-      while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0;
-        for (const [dx, dy] of DIRS){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue; const ni = ny*N + nx;
-          if (isSt(T[ni]) && flightOf[ni] < 0){ flightOf[ni] = flights; list.push(ni); q.push(ni); } } }
-      let style = 'stone';
-      if (!list.some(i => protectedMask[i])){ const cnt = {};
-        for (const i of list){ const st = (CROSSING[K[i]] || { style:'stone' }).style; cnt[st] = (cnt[st] || 0) + 1; }
-        style = Object.keys(cnt).sort((p, q) => cnt[q] - cnt[p] || (p < q ? -1 : 1))[0]; }
-      for (const i of list) stairStyle[i] = STAIR_STYLES.indexOf(style);
-      flights++;
-    }
-    for (let i = 0; i < N*N; i++){ if (flightOf[i] < 0) continue; const x = i % N, y = (i/N) | 0;   // knight's-move check
-      for (const [dx, dy] of [[1, 1], [-1, 1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-        const j = ny*N + nx; if (flightOf[j] >= 0 && flightOf[j] !== flightOf[i]) diagStairConflicts++; } }
-    // audit: stair flights without ground at both ends; ledge tiles beside cliff on the same line
-    let badLandings = 0, ledgeBesideCliff = 0;
-    { const seenF = new Uint8Array(N*N);
-      for (let i0 = 0; i0 < N*N; i0++){
-        const typ = T[i0]; if ((typ !== TILE.STAIRS && typ !== TILE.SIDE_STAIRS) || seenF[i0]) continue;
-        const list = [i0], q = [i0]; seenF[i0] = 1;
-        while (q.length){ const c = q.pop(), x = c % N, y = (c/N) | 0;
-          for (const [dx, dy] of DIRS){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue; const ni = ny*N + nx;
-            if (T[ni] === typ && !seenF[ni]){ seenF[ni] = 1; list.push(ni); q.push(ni); } } }
-        const ends = typ === TILE.STAIRS ? [[0, -1], [0, 1]] : [[-1, 0], [1, 0]];
-        if (list.some(c => { const x = c % N, y = (c/N) | 0; return ends.some(([dx, dy]) => { let nx = x + dx, ny = y + dy;
-            while (nx >= 0 && ny >= 0 && nx < N && ny < N && T[ny*N + nx] === typ){ nx += dx; ny += dy; }
-            return nx >= 0 && ny >= 0 && nx < N && ny < N && !WALKABLE[T[ny*N + nx]]; }); })) badLandings++;
+    // --- Checks (read-only; zero tolerance). Each issue names the structure it belongs to. ---
+    const issues = [...planIssues];
+    const isSt = t => t === TILE.STAIRS || t === TILE.SIDE_STAIRS;
+    const flightOf = new Int16Array(N*N).fill(-1);
+    for (const fl of flightList) for (const j of fl.tiles) flightOf[j] = fl.id;
+    const P = (j) => `(${j % N}, ${(j/N) | 0})`;
+    for (let j = 0; j < N*N; j++) if (isSt(T[j]) && flightOf[j] < 0) issues.push(`STAIR_?: stray stair tile at ${P(j)}`);
+    for (const fl of flightList){
+      const id = `STAIR_${String(fl.id).padStart(3, '0')}`, [dx, dy] = FV[fl.face], ax = dy ? 1 : 0, ay = dy ? 0 : 1;
+      const want = stairsFor(fl.face);
+      if (fl.tiles.some(j => T[j] !== want)) issues.push(`${id}: a tile is not ${want === TILE.STAIRS ? 'stairs' : 'side stairs'}`);
+      if (fl.tiles.some(j => inBand(j % N, (j/N) | 0))) issues.push(`${id}: inside the seam band`);
+      for (const j of fl.land) if (!WALKABLE[T[j]] || isSt(T[j])) issues.push(`${id}: landing blocked at ${P(j)}`);
+      for (const j of fl.tiles){ const x = j % N, y = (j/N) | 0;
+        for (const [sx2, sy2] of [[ax, ay], [-ax, -ay]]){ const k = at(x + sx2, y + sy2);
+          if (k >= 0 && flightOf[k] !== fl.id && T[k] !== TILE.CLIFF) issues.push(`${id}: flank open at ${P(k)}`); }
+        for (let ddy = -1; ddy <= 1; ddy++) for (let ddx = -1; ddx <= 1; ddx++){ const k = at(x + ddx, y + ddy);
+          if (k >= 0 && flightOf[k] >= 0 && flightOf[k] !== fl.id) issues.push(`${id}: touches STAIR_${String(flightOf[k]).padStart(3, '0')} (knight's-move rule)`); }
       }
-      for (let i = 0; i < N*N; i++){ const t = T[i]; if (!LEDGE_DIR[t]) continue; const x = i % N, y = (i/N) | 0;
-        const along = t === TILE.LEDGE_S ? [[1, 0], [-1, 0]] : [[0, 1], [0, -1]];
-        if (along.some(([dx, dy]) => { const nx = x + dx, ny = y + dy; return nx >= 0 && ny >= 0 && nx < N && ny < N && T[ny*N + nx] === TILE.CLIFF; })) ledgeBesideCliff++; }
     }
+    // cliff continuity: two walkable neighbours on different levels must be joined by a flight, along its climb
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++){ const i = y*N + x;
+      for (const [dx, dy] of [[1, 0], [0, 1]]){ const j = at(x + dx, y + dy); if (j < 0) continue;
+        if (!WALKABLE[T[i]] || !WALKABLE[T[j]] || L[i] === L[j] || T[i] === TILE.BRIDGE || T[j] === TILE.BRIDGE) continue;
+        const s = isSt(T[i]) ? i : isSt(T[j]) ? j : -1;
+        if (s < 0){ issues.push(`CLIFF: gap between levels at ${P(i)}–${P(j)}`); continue; }
+        const vertical = T[s] === TILE.STAIRS;
+        if (vertical !== (dy === 1)) issues.push(`STAIR_${String(flightOf[s]).padStart(3, '0')}: stepped onto from the side at ${P(s)}`);
+      } }
+    // ledges: away from cliffs and stairs, take-off and landing on the same level
+    for (let j = 0; j < N*N; j++){ const ld = LEDGE_DIR[T[j]]; if (!ld) continue; const x = j % N, y = (j/N) | 0;
+      for (let ddy = -1; ddy <= 1; ddy++) for (let ddx = -1; ddx <= 1; ddx++){ const k = at(x + ddx, y + ddy);
+        if (k >= 0 && (T[k] === TILE.CLIFF || isSt(T[k]))) { issues.push(`LEDGE: beside a cliff or stairs at ${P(j)}`); ddy = 2; break; } }
+      const a = at(x - ld[0], y - ld[1]), b = at(x + ld[0], y + ld[1]);
+      if (a < 0 || b < 0 || L[a] !== L[b]) issues.push(`LEDGE: take-off and landing on different levels at ${P(j)}`);
+    }
+    for (const r of required) if (!(fw && fw[r.i] && bw[r.i])) issues.push(`ROUTE: ${r.name} not reachable both ways`);
+    if (traps) issues.push(`LEDGE: ${traps} tile(s) can be reached but not left`);
+    // stair looks: one style per flight, from the land cover where it stands (flights never touch, so colours never do)
+    const stairStyle = new Uint8Array(N*N);
+    for (const fl of flightList) for (const j of fl.tiles) stairStyle[j] = STAIR_STYLES.indexOf(fl.style);
     let lmin = Infinity, lmax = -Infinity; for (let i = 0; i < N*N; i++) if (T[i] !== TILE.WATER){ lmin = Math.min(lmin, L[i]); lmax = Math.max(lmax, L[i]); }
-    results.push({ x:sx, y:sy, N, wild, border, stairStyle, flights, diagStairConflicts, badLandings, ledgeBesideCliff, ledgesHidden, tiles:T, cls:K, level:L, trail, protectedMask, ports, junction, junctionSource, bridges, repairs, fallback,
-                   unreachable, traps, trapFixes, needsSurf, waypoints:waypointCount, ledges, stairs, cliffs, content,
-                   levels:isFinite(lmin) ? lmax - lmin + 1 : 0, offPathShare:reach && required.length ? (reach - onPath)/reach : null, grassShare:reach ? grass/reach : 0,
-                   ndvi:inp.ndvi ? 'NDVI' : 'estimated from land cover',
-                   log:sLog, connections:[...ports.map(p => ({ direction:['right', 'left', 'down', 'up'][p.side], to:p.neighbour, offset:0 })), ...sceneryLinks] });
+    const walkAll = (() => { let n = 0; for (let i = 0; i < N*N; i++) if (WALKABLE[T[i]]) n++; return n; })();
+    return { x:sx, y:sy, N, wild, border, stairStyle, flights:flightList.length, flightList:flightList.map(f => ({ id:f.id, face:'NSEW'[[FACE.N, FACE.S, FACE.E, FACE.W].indexOf(f.face)], width:f.width, depth:f.depth, x:f.x, y:f.y, style:f.style, why:f.why })),
+             rugged:ruggedVal, ruggedParts:(() => { let a = 0, b = 0, n = 0; for (let ly = 2; ly < N; ly += 6) for (let lx = 2; lx < N; lx += 6){ const q = ruggedParts(sx*N + lx, sy*N + ly); a += q[0]; b += q[1]; n++; } return [+(a/n).toFixed(2), +(b/n).toFixed(2)]; })(), stairTarget:target, issues, attempt, ledgeRuns,
+             tiles:T, cls:K, level:L, trail, protectedMask, ports, junction, junctionSource, bridges, repairs, fallback,
+             unreachable, traps, trapFixes, needsSurf, waypoints:waypointCount, ledges, stairs, cliffs, content, walkable:walkAll,
+             levels:isFinite(lmin) ? lmax - lmin + 1 : 0, offPathShare:reach && required.length ? (reach - onPath)/reach : null, grassShare:reach ? grass/reach : 0,
+             ndvi:inp.ndvi ? 'NDVI' : 'estimated from land cover',
+             log:sLog, connections:[...ports.map(p => ({ direction:['right', 'left', 'down', 'up'][p.side], to:p.neighbour, offset:0 })), ...sceneryLinks] };
+  };
+  // each square: up to ATTEMPTS.length tries, each with a new attempt seed and simpler relief; the first that passes
+  // every check is kept. If none passes, the last try is kept and reported as a hard failure (never exported).
+  for (const sq of winSquares){
+    let res = null;
+    for (let a = 0; a < ATTEMPTS.length; a++){ res = buildSquare(sq, a); if (!res.issues.length) break; }
+    res.hardFailure = res.issues.length > 0;
+    if (res.attempt && !res.hardFailure) res.log.push(`passed on attempt ${res.attempt + 1} (${ATTEMPTS[res.attempt].name})`);
+    results.push(res);
   }
 
   // --- Region-wide checks ---
@@ -1415,14 +1462,16 @@ function generate(inp){
     spursGap:results.reduce((s, r) => s + r.content.spurs.gap, 0), spursTrail:results.reduce((s, r) => s + r.content.spurs.trail, 0),
     loops:results.reduce((s, r) => s + r.content.loops, 0), ponds:results.reduce((s, r) => s + r.content.ponds, 0),
     thicketTiles:results.reduce((s, r) => s + r.content.thicketTiles, 0), grassSource:inp.ndvi ? 'NDVI' : 'land cover estimate',
-    terraceBlock:B, cliffRuns:runStats.runs, stairFlights:results.reduce((s, r) => s + r.flights, 0),
-    diagStairConflicts:results.reduce((s, r) => s + r.diagStairConflicts, 0),
-    badLandings:results.reduce((s, r) => s + r.badLandings, 0), ledgeBesideCliff:results.reduce((s, r) => s + r.ledgeBesideCliff, 0),
-    ledgesHidden:results.reduce((s, r) => s + r.ledgesHidden, 0),
+    terraceBlock:B, stairFlights:results.reduce((s, r) => s + r.flights, 0),
+    flightsPer100:+(results.reduce((s, r) => s + r.flights, 0)/Math.max(1, results.reduce((s, r) => s + r.walkable, 0))*100).toFixed(2),
+    flightsPerSquare:results.map(r => `${r.x},${r.y}:${r.flights}/${r.stairTarget}${r.rugged >= RELIEF.ruggedMin ? 'R' : ''}`),
+    ledgeTilesPer100:+(results.reduce((s, r) => s + r.ledges, 0)/Math.max(1, results.reduce((s, r) => s + r.walkable, 0))*100).toFixed(2),
+    retries:results.filter(r => r.attempt > 0).map(r => `${r.x},${r.y}:${r.attempt + 1}`),
+    hardFailures:results.filter(r => r.hardFailure).map(r => `${r.x},${r.y}: ${[...new Set(r.issues)].slice(0, 6).join('; ')}`),
     scenery:scenery.map(s2 => `${s2.x},${s2.y} (seen from ${s2.seenFrom.join(', ')})`),
     borders:results.map(r => `${r.x},${r.y}:${r.border}`)
   };
-  report.ok = !seamIssues.length && !reciprocal.length && !report.unreachable.length && !report.traps;
+  report.ok = !seamIssues.length && !reciprocal.length && !report.unreachable.length && !report.traps && !report.hardFailures.length;
   return { version, N, band:BAND, window:win, squares:results, scenery, contracts, report, log };
 }
 
@@ -5084,12 +5133,13 @@ function drawOverworld(){
   cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
   const r = res.report, lines = [
     `${r.squares} map(s), ${r.contracts} edge contract(s), ${Math.round(performance.now() - t0)} ms · seed ${r.seed} · ${r.version}`,
-    r.ok ? 'Checks passed: seams match, every connection is two-way, every port and junction is reachable, no ledge traps.' : 'CHECKS FAILED',
+    r.ok ? 'Checks passed: seams match, every connection is two-way, every port and junction is reachable, no ledge traps, every stair flight, cliff and ledge passes the relief checks.' : 'CHECKS FAILED',
+    ...r.hardFailures.map(s => 'Relief: ' + s),
     ...r.seamFailures.map(s => 'Seam: ' + s), ...r.reciprocityFailures.map(s => 'Connection: ' + s), ...r.unreachable.map(s => 'Unreachable: ' + s),
     `Repairs: ${r.repairs} · fallbacks: ${r.fallbacks} · first-pass reachable: ${r.firstPassReachable}/${r.squares} · connected groups: ${r.components}`,
-    `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.ledgeTiles} ledge and ${r.stairTiles} stair tiles · ${r.trapFixes} ledge tile(s) opened into gaps so nothing traps you · ${r.ledgesHidden} ledge tile(s) around unreachable ground made cliff`,
+    `Relief: terrace step ${r.terraceStepM} m · ${r.meanLevels} levels per map · ${r.stairFlights} stair flights (${r.flightsPer100} per 100 walkable tiles; target 1, cap 8, 12 on rugged ground) · ${r.ledgeTiles} ledge tiles (${r.ledgeTilesPer100} per 100) · retries: ${r.retries.join(' ') || 'none'}`,
     `Exploration: ${r.waypoints} waypoint(s) · ${Math.round(r.offPathShare*100)}% of reachable ground is off the path (target 80%)${r.needSurf.length ? ' · needs Surf: ' + r.needSurf.join(' ') : ''}`,
-    `Terraces: ${r.terraceBlock}×${r.terraceBlock} blocks · ${r.cliffRuns} straight cliff runs · ${r.stairFlights} stair flights · knight's-move conflicts: ${r.diagStairConflicts} · flights without ground at an end: ${r.badLandings} · ledges beside cliffs: ${r.ledgeBesideCliff}${r.scenery.length ? ' · scenery maps: ' + r.scenery.join('; ') : ''}`,
+    `Terraces: ${r.terraceBlock}×${r.terraceBlock} blocks · flights per map (found/target, R = rugged): ${r.flightsPerSquare.join(' ')}${r.scenery.length ? ' · scenery maps: ' + r.scenery.join('; ') : ''}`,
     `Off-path content: ${r.spursGap} hidden gap(s) and ${r.spursTrail} side trail(s) · ${r.loops} loop(s) · ${r.ponds} pond(s) · ${r.thicketTiles} thicket tiles · tall grass ${Math.round(r.grassShare*100)}% of reachable ground (${r.grassSource})${r.wild.length ? ' · wild squares: ' + r.wild.join(' ') : ''}`,
     ...res.contracts.map(c => `Edge ${c.a.x},${c.a.y}↔${c.b.x},${c.b.y}: port ${c.pos}, path ${c.path}, verge ${c.verge} (${c.source === 'road' ? 'real road' : 'seeded'})${c.notes.length ? ' — ' + [...new Set(c.notes)].join('; ') : ''}`),
     ...res.squares.filter(s => s.log.length).map(s => `Square ${s.x},${s.y}: ${s.log.join('; ')}`),
