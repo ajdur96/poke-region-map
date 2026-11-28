@@ -45,6 +45,15 @@ const region = makeRegion();
 const failures = [];
 const check = (cond, msg) => { if (!cond) failures.push(msg); console.log((cond ? 'PASS ' : 'FAIL ') + msg); };
 
+// composition step 3: route plan — every path has a purpose, beats placed, deterministic
+{
+  const inp = { ...region, seed:777, N:36, routes:[{ id:0, name:'Test route', squares:[...new Map((region.links || []).flatMap(l => [l.a, l.b]).map(q => [q.x + ',' + q.y, q])).values()] }] };
+  const pm = OG.planMasses(inp), r1 = OG.planRoutes(inp, pm), r2 = OG.planRoutes(inp, pm);
+  check(r1.stats.purposeIssues === 0, `every path and trail ends at a port, the junction or a beat (${r1.stats.squares} squares)`);
+  check(r1.stats.beats > 0, `beats placed (${r1.stats.beats}; ${r1.stats.beatsDropped} didn't fit)`);
+  check(JSON.stringify(r1.squares.map(q => [q.role, q.path, q.cells])) === JSON.stringify(r2.squares.map(q => [q.role, q.path, q.cells])), 'route plan is deterministic');
+  check(r1.squares.every(q => q.cells.every(a => q.cells.every(b => a === b || Math.max(Math.abs(a.c % 9 - b.c % 9), Math.abs(((a.c/9) | 0) - ((b.c/9) | 0))) >= 2))), 'beats are never next to each other');
+}
 // composition step 2: region-wide mass plan — deterministic, whole region, coherent masses
 {
   const p1 = OG.planMasses({ ...region, seed:777, N:36 }), p2 = OG.planMasses({ ...region, seed:777, N:36 });

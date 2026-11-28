@@ -3705,6 +3705,7 @@ function overworldInput(center){
   return { seed:state.seed || 0, N, gridW:MW, gridH:MH, sub:SUB, terrain:state.terrain, cover:drawCover(), lake:state.lake,
            river:state.river, elev:state.elev, ndvi:state.ndvi, climate:state.climate, kmPerSquare:kmPerSquare(), links, active,
            townSquares:state.towns.flatMap(t => footprint(t)), roads:state.roadLines || [],
+           routes:paths.map((p, k) => p && { id:k, name:(state.routes[k] && state.routes[k].name) || `Route ${k + 1}`, squares:p.squares, weather:weatherOver(p.squares) }).filter(Boolean),
            window:{ x0, y0, w:3, h:3 } };
 }
 function overworldCenter(){
@@ -3736,7 +3737,7 @@ function showOverworld(){
     box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-family:'Press Start 2P',monospace;font-size:10px">OVERWORLD 3×3 (PROTOTYPE)</b>
         <label>terrace blocks <select id="owBlock"><option value="4" selected>4×4</option><option value="3">3×3</option></select></label>
-        <label>view <select id="owMode"><option value="plan">mass plan (step 2)</option><option value="real" selected>real tiles</option><option value="terrain">terrain</option><option value="walk">walkability</option></select></label>
+        <label>view <select id="owMode"><option value="plan">mass plan (step 2)</option><option value="routeplan">route plan (step 3)</option><option value="real" selected>real tiles</option><option value="terrain">terrain</option><option value="walk">walkability</option></select></label>
         <label><input type="checkbox" id="owApprox"> mark guessed tiles</label>
         <label><input type="checkbox" id="owSeams" checked> seams</label>
         <label><input type="checkbox" id="owBand"> seam bands</label>
@@ -3758,10 +3759,20 @@ function drawMassPlan(){
   const key = [inp.seed, inp.gridW, inp.gridH, OverworldGen.VERSION, (state.ndvi || []).length].join(':');
   if (!owPlanCache || owPlanCache.key !== key) owPlanCache = { key, plan:OverworldGen.planMasses(inp) };
   const plan = owPlanCache.plan, ms = Math.round(performance.now() - t0), win = { x0:c.x - 1, y0:c.y - 1, w:3, h:3 };
-  const img = OverworldGen.massPlanRGBA(plan, { window:win, cellPx:16, showBand:$('owBand').checked, raw:$('owApprox').checked });
+  const routeMode = $('owMode').value === 'routeplan';
+  if (routeMode && (!owPlanCache.routes || owPlanCache.routesKey !== JSON.stringify(inp.routes.map(r => r.squares.length)) + inp.links.length)){
+    owPlanCache.routes = OverworldGen.planRoutes(inp, plan); owPlanCache.routesKey = JSON.stringify(inp.routes.map(r => r.squares.length)) + inp.links.length; }
+  const rp = routeMode ? owPlanCache.routes : null;
+  const img = routeMode ? OverworldGen.routePlanRGBA(plan, rp, { window:win, cellPx:16, showBand:$('owBand').checked })
+                        : OverworldGen.massPlanRGBA(plan, { window:win, cellPx:16, showBand:$('owBand').checked, raw:$('owApprox').checked });
   const cv = $('owCanvas'), k = Math.max(0.5, Math.min(2, Math.min(innerWidth*0.85, innerHeight*0.55)/img.width));
   cv.width = img.width; cv.height = img.height; cv.style.width = Math.round(img.width*k) + 'px';
-  cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+  const g2 = cv.getContext('2d'); g2.putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+  if (img.labels){ g2.textAlign = 'center'; g2.textBaseline = 'middle';
+    for (const l of img.labels){
+      if (l.role){ g2.textAlign = 'left'; g2.font = 'bold 11px sans-serif'; g2.fillStyle = 'rgba(0,0,0,0.55)'; g2.fillRect(l.x - 2, l.y - 9, g2.measureText(l.text).width + 4, 14); g2.fillStyle = '#fff'; g2.fillText(l.text, l.x, l.y - 2); g2.textAlign = 'center'; continue; }
+      g2.font = 'bold 12px sans-serif'; g2.fillStyle = l.hidden ? 'rgba(40,40,40,0.75)' : 'rgba(255,255,255,0.9)'; g2.beginPath(); g2.arc(l.x, l.y, 7, 0, 7); g2.fill();
+      g2.fillStyle = l.hidden ? '#fff' : '#222'; g2.fillText(l.text, l.x, l.y + 1); } }
   cv.onmousemove = e => { const b = cv.getBoundingClientRect(), cx = Math.floor((e.clientX - b.left)*cv.width/b.width/16), cy = Math.floor((e.clientY - b.top)*cv.height/b.height/16);
     const gx = win.x0*plan.per + cx, gy = win.y0*plan.per + cy, i = gy*plan.CW + gx; if (i < 0 || i >= plan.mass.length) return;
     $('owHover').textContent = `Cell ${gx},${gy} (square ${Math.floor(gx/plan.per)},${Math.floor(gy/plan.per)}): ${OverworldGen.MASS_NAMES[plan.mass[i]]}${plan.river[i] ? ' (river)' : ''} · from the data: ${OverworldGen.MASS_NAMES[plan.raw[i]]} · relief: ${['lowland', 'foothills', 'mountain'][plan.mode[i]]}`; };
@@ -3774,6 +3785,17 @@ function drawMassPlan(){
   const C = OverworldGen.MASS_COLORS, sw = k => `<span style="color:rgb(${C[k].join(',')})">■</span>`;
   $('owKey').innerHTML = `Mass plan (composition step 2): ${sw(0)} meadow ${sw(1)} forest ${sw(2)} sand / bare ground ${sw(3)} rock / high ground ${sw(4)} water <span style="color:rgb(110,175,240)">■</span> river · hatching: light = foothills, dense = mountain · each small square is a 4×4-tile cell; red lines are map edges; the lighter rim is the exact 7-tile seam band · tick "mark guessed tiles" to see the raw data picks instead of the grown masses · below: the whole region, yellow box = this window`;
   const st = plan.stats;
+  if (routeMode){
+    const G = OverworldGen.BEAT_GLYPH, rs = rp.stats;
+    $('owKey').innerHTML = `Route plan (composition step 3) over the mass plan: <span style="color:#eb8c28">■</span> main path <span style="color:#faebaa">■</span> trail <span style="color:#c82828">■</span> port <span style="color:#782aa0">■</span> junction <span style="color:#f0f">■</span> path end with no purpose (should be none) · beats: ` + Object.entries(G).map(([b, g]) => `<b>${g}</b> ${b}`).join(' · ') + ` · dark beat = hidden (no trail) · each square shows its role and estimated off-path share · below: the whole region's mass plan`;
+    $('owReport').textContent = [
+      `Route plan for the whole region: ${rs.squares} route squares · roles: ${Object.entries(rs.roles).map(([k, v]) => k + ' ' + v).join(', ')} · ${rs.beats} beats placed${rs.beatsDropped ? ` (${rs.beatsDropped} didn't fit: ${rp.dropped.slice(0, 6).join('; ')}${rp.dropped.length > 6 ? '…' : ''})` : ''}`,
+      `Path purpose: ${rs.purposeIssues ? rs.purposeIssues + ' path end(s) with no purpose' : 'every path ends at a port, the junction or a beat'} · off-path share (estimated from cells): median ${Math.round((rs.offPathMedian || 0)*100)}%, ${rs.offPathAtTarget}/${rs.offPathMeasured} land squares at 80%+`,
+      ...rp.missions.map(m => `${m.name} (${m.squares} squares${m.weather ? ', ' + m.weather : ''}): ` + Object.entries(m.beats).filter(([, n]) => n).map(([b, n]) => `${n} ${b}`).join(', ')),
+      ...rp.issues.slice(0, 20),
+    ].join('\n');
+    return;
+  }
   $('owReport').textContent = [
     `Mass plan for the whole region: ${plan.CW}×${plan.CH} cells in ${ms} ms (cached after the first draw)`,
     `Cells that kept the mass the data picked: ${Math.round(st.keptFromData*100)}% · fragments merged: ${st.fragmentsMerged} cells · masses continuing across map edges: ${Math.round(st.edgeContinuity*100)}% of edge cells`,
@@ -3782,7 +3804,7 @@ function drawMassPlan(){
 }
 function drawOverworld(){
   const rcv = document.getElementById('owRegionCanvas');
-  if ($('owMode').value === 'plan') return drawMassPlan();
+  if ($('owMode').value === 'plan' || $('owMode').value === 'routeplan') return drawMassPlan();
   if (rcv) rcv.style.display = 'none';
   const t0 = performance.now();
   let res;

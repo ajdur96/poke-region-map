@@ -1605,6 +1605,199 @@ function massPlanRGBA(plan, opts = {}){
     for (let y = o.y0*sq; y <= (o.y0 + o.h)*sq; y++){ line(o.x0*sq, y, [255, 255, 0]); line((o.x0 + o.w)*sq - 1, y, [255, 255, 0]); } }
   return { width:W, height:H, data:img };
 }
+// ===================== Composition step 3: route missions, square roles, route skeleton =====================
+// For every region route: a mission (the beats it offers, decided 2026-11-27), spread over its squares. For every
+// square on a route: a role, port cells, a junction for 3+ ports, the main path on the 9×9 cell grid (A* through the
+// mass plan, preferring real roads), and the beats placed in cells that suit them, each reached by a trail or hidden
+// with none. Rule: every path ends at a port, a junction or a beat. Off-path share is estimated from the cells.
+const BEAT = { TRAINER:'trainer', ITEM:'item', HIDDEN_ITEM:'hidden item', BERRY:'berry patch', VIEW:'viewpoint', CROSSING:'crossing',
+  LOOP:'detour / loop', CLIMB:'Rock Climb reward', GATE:'field-move gate', HUNT:'tall-grass hunting ground', POCKET:'hidden pocket',
+  BASE:'Secret Base spot', CAVE:'cave entrance' };
+const BEAT_GLYPH = { trainer:'T', item:'I', 'hidden item':'i', 'berry patch':'B', viewpoint:'V', crossing:'X', 'detour / loop':'L',
+  'Rock Climb reward':'R', 'field-move gate':'G', 'tall-grass hunting ground':'H', 'hidden pocket':'P', 'Secret Base spot':'S', 'cave entrance':'C' };
+const ROUTE_PLAN = { pathWidth:[3, 2, 4, 2, 3], walkTiles:[16, 4, 16, 6, 0], maxBeatsPerSquare:7, cost:[1, 2.5, 1.2, 4, 10], meander:0.6 };
+function planRoutes(inp, plan){
+  const N = inp.N || 36, per = plan.per, CW = plan.CW, seeds = makeSeeds(inp.seed || 0, inp.version || VERSION);
+  const sqId = (x, y) => y*inp.gridW + x, cellAt = (sx, sy, cx, cy) => (sy*per + cy)*CW + sx*per + cx;
+  const links = new Map(), ports = new Map();       // sqId → {side: cell index along that edge}
+  const addPort = (sq, side, t) => { const k = sqId(sq.x, sq.y); if (!ports.has(k)) ports.set(k, {}); ports.get(k)[side] = t; };
+  const roadCross = (a, b, horiz) => {              // where a real road crosses the shared edge, in cells along it
+    for (const road of inp.roads || []) for (let k = 0; k + 1 < road.pts.length; k++){
+      const p0 = road.pts[k], p1 = road.pts[k + 1];
+      if (horiz){ const ex = b.x; if ((p0.x - ex)*(p1.x - ex) > 0 || p0.x === p1.x) continue;
+        const y = p0.y + (p1.y - p0.y)*(ex - p0.x)/(p1.x - p0.x); if (y >= a.y && y < a.y + 1) return Math.min(per - 1, Math.floor((y - a.y)*per)); }
+      else { const ey = b.y; if ((p0.y - ey)*(p1.y - ey) > 0 || p0.y === p1.y) continue;
+        const x = p0.x + (p1.x - p0.x)*(ey - p0.y)/(p1.y - p0.y); if (x >= a.x && x < a.x + 1) return Math.min(per - 1, Math.floor((x - a.x)*per)); }
+    }
+    return -1; };
+  for (const l of inp.links || []){
+    let a = l.a, b = l.b; if (a.x > b.x || a.y > b.y) [a, b] = [b, a];
+    const key = sqId(a.x, a.y) + ':' + sqId(b.x, b.y); if (links.has(key)) continue; links.set(key, { a, b });
+    const horiz = a.y === b.y, road = roadCross(a, b, horiz);
+    const r = mulberry32(seeds.edge(sqId(a.x, a.y), sqId(b.x, b.y)))();
+    const t = road >= 0 ? Math.min(per - 3, Math.max(2, road)) : 2 + Math.floor(r*(per - 4));   // keep ports off the corners
+    if (horiz){ addPort(a, 'E', t); addPort(b, 'W', t); } else { addPort(a, 'S', t); addPort(b, 'N', t); }
+  }
+  const townSet = new Set((inp.townSquares || []).map(q => sqId(q.x, q.y)));
+  const routeOf = new Map(); for (const r of inp.routes || []) for (const q of r.squares) if (!routeOf.has(sqId(q.x, q.y))) routeOf.set(sqId(q.x, q.y), r);
+  // square facts from the mass plan
+  const facts = (sx, sy) => { const f = { mass:[0, 0, 0, 0, 0], mode:[0, 0, 0], river:0, road:false };
+    for (let cy = 0; cy < per; cy++) for (let cx = 0; cx < per; cx++){ const i = cellAt(sx, sy, cx, cy); f.mass[plan.mass[i]]++; f.mode[plan.mode[i]]++; if (plan.river[i]) f.river++; }
+    f.road = (inp.roads || []).some(road => road.pts.some(p => p.x >= sx && p.x < sx + 1 && p.y >= sy && p.y < sy + 1));
+    return f; };
+  // --- missions: beats per route, spread over its squares by fit ---
+  const squares = new Map();                       // sqId → square plan
+  for (const [k, pt] of ports){ const sx = k % inp.gridW, sy = Math.floor(k/inp.gridW); if (townSet.has(k)) continue;
+    squares.set(k, { x:sx, y:sy, ports:pt, facts:facts(sx, sy), beats:[], route:routeOf.get(k) || null }); }
+  const missions = [], dropped = [];
+  for (const r of inp.routes || []){
+    const sqs = r.squares.map(q => squares.get(sqId(q.x, q.y))).filter(Boolean); if (!sqs.length) continue;
+    const L = sqs.length, rnd = mulberry32(hash32(seeds.layer('mission'), r.id));
+    const sum = k => sqs.reduce((a, q) => a + q.facts.mass[k], 0), modeSum = k => sqs.reduce((a, q) => a + q.facts.mode[k], 0);
+    const want = [[BEAT.TRAINER, Math.max(1, Math.round(L*1.2))], [BEAT.ITEM, Math.ceil(L*0.5)], [BEAT.HIDDEN_ITEM, Math.ceil(L*0.5)],
+      [BEAT.BERRY, sum(0) > 20 ? Math.max(1, Math.floor(L/4)) : 0], [BEAT.VIEW, 1], [BEAT.LOOP, Math.max(1, Math.floor(L/3))],
+      [BEAT.CLIMB, modeSum(1) + modeSum(2) > 40 ? 1 : 0], [BEAT.GATE, Math.ceil(L/3)], [BEAT.HUNT, sum(0) > 30 ? 1 : 0],
+      [BEAT.POCKET, Math.ceil(L/2)], [BEAT.BASE, sum(1) + sum(3) > 20 ? Math.max(1, Math.floor(L/3)) : 0], [BEAT.CAVE, modeSum(2) > 30 ? 1 : 0]];
+    const crossings = sqs.filter(q => q.facts.river > 0).length; if (crossings) want.push([BEAT.CROSSING, crossings]);
+    const fit = (q, b) => { const m = q.facts.mass, md = q.facts.mode;
+      return b === BEAT.HUNT || b === BEAT.BERRY ? m[0] : b === BEAT.CLIMB ? md[1] + 2*md[2] : b === BEAT.CAVE ? md[2] + m[3]
+           : b === BEAT.BASE ? m[1] + m[3] : b === BEAT.CROSSING ? q.facts.river*10 : b === BEAT.VIEW ? md[1] + md[2] + m[4] : 10; };
+    const counts = {};
+    for (const [b, n] of want){ counts[b] = n;
+      for (let j = 0; j < n; j++){
+        let best = null, bs = -Infinity;
+        for (const q of sqs){ const load = q.beats.length; if (load >= ROUTE_PLAN.maxBeatsPerSquare) continue;
+          if (b === BEAT.CROSSING && (!q.facts.river || q.beats.includes(b))) continue;
+          const sc = fit(q, b) - 6*load - 8*q.beats.filter(x => x === b).length + 4*rnd(); if (sc > bs){ bs = sc; best = q; } }
+        if (best) best.beats.push(b); else dropped.push(`${r.name || 'route ' + (r.id + 1)}: ${b}`);
+      } }
+    const weather = r.weather && !['sunny', 'clouds', 'shade'].includes(r.weather) ? r.weather : null;
+    if (weather) for (const q of sqs) q.weather = weather;
+    missions.push({ route:r.id, name:r.name || `route ${r.id + 1}`, squares:L, beats:counts, weather });
+  }
+  // --- per square: role, junction, main path, beats in cells, trails ---
+  const issues = [];
+  for (const q of squares.values()){
+    const { x:sx, y:sy } = q, f = q.facts, rs = mulberry32(seeds.square(sx, sy));
+    const sides = Object.keys(q.ports), cellOf = (cx, cy) => cellAt(sx, sy, cx, cy);
+    const portCell = s => { const t = q.ports[s]; return s === 'E' ? [per - 1, t] : s === 'W' ? [0, t] : s === 'S' ? [t, per - 1] : [t, 0]; };
+    const sea = f.mass[4] >= 0.6*per*per;           // mostly water: crossed by Surf
+    const wild = !sea && !f.road && (f.mass[1] + f.mass[2] + f.mass[3]) >= 0.6*(per*per - f.mass[4]);
+    const total = per*per - f.mass[4], mtn = f.mode[1] + f.mode[2];
+    const pm = sides.map(s => { const [cx, cy] = portCell(s); return plan.mass[cellOf(cx, cy)]; });
+    q.role = sea ? 'sea route' : wild ? 'wild' : sides.length >= 3 ? 'junction' : f.river > 0 ? 'river crossing' : mtn > 0.5*total ? 'climb'
+           : (pm.length === 2 && pm[0] !== pm[1]) ? 'transition' : 'traverse';
+    q.wild = wild;
+    const cost = (cx, cy) => { const i = cellOf(cx, cy), m = plan.mass[i];
+      let c = plan.river[i] ? (q.beats.includes(BEAT.CROSSING) ? 3 : 10) : ROUTE_PLAN.cost[m];
+      if (plan.mode[i] === 2) c += 1.5;
+      return c + ROUTE_PLAN.meander*smoothNoise(seeds.layer('routeMeander'), sx*per + cx, sy*per + cy, 3); };
+    const astar = (from, to, extra) => {           // 4-neighbour A* on the 9×9 cells
+      const D = new Float64Array(per*per).fill(Infinity), P = new Int16Array(per*per).fill(-1), open = [[0, from[1]*per + from[0]]];
+      D[from[1]*per + from[0]] = 0;
+      while (open.length){ open.sort((a, b) => a[0] - b[0]); const [, c] = open.shift(); const cx = c % per, cy = (c/per) | 0;
+        if (cx === to[0] && cy === to[1]) break;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = cx + dx, ny = cy + dy; if (nx < 0 || ny < 0 || nx >= per || ny >= per) continue;
+          const n = ny*per + nx, nd = D[c] + cost(nx, ny) + (extra ? extra(nx, ny) : 0);
+          if (nd < D[n]){ D[n] = nd; P[n] = c; open.push([nd + Math.abs(nx - to[0]) + Math.abs(ny - to[1]), n]); } } }
+      const out = []; let c = to[1]*per + to[0]; if (D[c] === Infinity) return out;
+      while (c >= 0){ out.push(c); c = P[c]; }
+      return out.reverse(); };
+    // junction: 3+ ports meet at the cheapest open cell near the centre
+    let junction = null;
+    if (sides.length >= 3){ let best = Infinity;
+      for (let cy = 2; cy <= per - 3; cy++) for (let cx = 2; cx <= per - 3; cx++){ const c = cost(cx, cy) + 0.6*(Math.abs(cx - 4) + Math.abs(cy - 4)); if (c < best){ best = c; junction = [cx, cy]; } } }
+    const path = new Set(), trail = new Set();
+    const hub = junction || (sides.length === 2 ? null : null);
+    if (sides.length === 2 && !wild){ for (const c of astar(portCell(sides[0]), portCell(sides[1]))) path.add(c); }
+    else if (sides.length >= 3){ for (const s of sides) for (const c of astar(portCell(s), junction)) path.add(c); }
+    else if (sides.length === 2 && wild){ for (const c of astar(portCell(sides[0]), portCell(sides[1]))) trail.add(c); }   // a faint trail, no spine
+    else if (sides.length === 1){ const [cx, cy] = portCell(sides[0]); const end = [Math.min(per - 3, Math.max(2, cx)), Math.min(per - 3, Math.max(2, cy))];
+      for (const c of astar(portCell(sides[0]), end)) path.add(c); q.deadEnd = end; }
+    // beats in cells
+    const onPath = c => path.has(c) || trail.has(c);
+    const near = (c, set) => { const cx = c % per, cy = (c/per) | 0; let d = Infinity; for (const p of set){ d = Math.min(d, Math.abs(p % per - cx) + Math.abs(((p/per) | 0) - cy)); } return d; };
+    const spine = path.size ? path : trail;
+    q.cells = [];
+    for (const b of q.beats){
+      let best = null, bs = -Infinity;
+      for (let cy = 1; cy < per - 1; cy++) for (let cx = 1; cx < per - 1; cx++){
+        const c = cy*per + cx, i = cellOf(cx, cy), m = plan.mass[i], md = plan.mode[i], d = spine.size ? near(c, spine) : 3;
+        if (q.cells.some(e => e.c === c) || m === 4 && b !== BEAT.CROSSING && b !== BEAT.VIEW) continue;
+        // spread beats out: never next to another beat, and trainers at least 3 cells apart (their sightlines)
+        if (q.cells.some(e => Math.max(Math.abs(e.c % per - cx), Math.abs(((e.c/per) | 0) - cy)) <= (b === BEAT.TRAINER && e.beat === BEAT.TRAINER ? 2 : 1))) continue;
+        let sc = rs()*0.5;
+        if (b === BEAT.TRAINER) sc += onPath(c) ? 3 : d === 1 ? 2 : -5;                        // beside or on the path, in its line of sight
+        else if (b === BEAT.BERRY) sc += d === 1 && m === 0 ? 4 : -3;
+        else if (b === BEAT.CROSSING) sc += plan.river[i] && onPath(c) ? 6 : plan.river[i] ? 2 : -9;
+        else if (b === BEAT.HUNT) sc += (m === 0 ? 3 : -3) + (d >= 1 && d <= 3 ? 1 : 0);
+        else if (b === BEAT.CLIMB) sc += md*2 + (m === 3 ? 2 : 0) + (d >= 2 ? 1 : -2);
+        else if (b === BEAT.CAVE) sc += (md === 2 ? 3 : 0) + (m === 3 ? 3 : -2) + (d >= 2 ? 1 : 0);
+        else if (b === BEAT.BASE) sc += (m === 1 || m === 3 ? 3 : -2) + (d >= 2 ? 1 : 0);
+        else if (b === BEAT.VIEW) sc += md*1.5 + (m === 3 ? 1 : 0) + (d >= 2 ? 1.5 : 0);
+        else sc += (d >= 2 && d <= 4 ? 3 : d > 4 ? 1 : -4) + (m === 1 || m === 3 ? 0.5 : 0);   // items, pockets, gates, loops: off the path
+        if (sc > bs){ bs = sc; best = c; } }
+      if (best === null){ issues.push(`${sx},${sy}: no cell for ${b}`); continue; }
+      q.cells.push({ c:best, beat:b });
+    }
+    // a square with one exit: its path is a deliberate dead end, so the end gets a reward (an item) if no beat is there
+    if (q.deadEnd){ const ec = q.deadEnd[1]*per + q.deadEnd[0];
+      if (!q.cells.some(e => e.c === ec)){ for (let k = q.cells.length - 1; k >= 0; k--){ const e = q.cells[k];
+          if (Math.max(Math.abs(e.c % per - q.deadEnd[0]), Math.abs(((e.c/per) | 0) - q.deadEnd[1])) <= 1) q.cells.splice(k, 1); }
+        q.cells.push({ c:ec, beat:BEAT.ITEM, deadEnd:true }); } }
+    // trails to beats that sit off the path (hidden ones get none); a loop rejoins the path further along
+    for (const e of q.cells){
+      if (onPath(e.c) || !spine.size) continue;
+      if (e.beat === BEAT.HIDDEN_ITEM || e.beat === BEAT.POCKET){ e.hidden = true; continue; }
+      let best = null, bd = Infinity; for (const p of spine){ const d = Math.abs(p % per - e.c % per) + Math.abs(((p/per) | 0) - ((e.c/per) | 0)); if (d < bd){ bd = d; best = p; } }
+      const tr = astar([best % per, (best/per) | 0], [e.c % per, (e.c/per) | 0], (nx, ny) => path.has(ny*per + nx) ? 3 : 0);
+      for (const c of tr) if (!path.has(c)) trail.add(c);
+      if (e.beat === BEAT.LOOP){ let far = null, fd = -1;
+        for (const p of spine){ const d = Math.abs(p % per - best % per) + Math.abs(((p/per) | 0) - ((best/per) | 0)); if (d > fd && d <= 6){ fd = d; far = p; } }
+        if (far !== null) for (const c of astar([e.c % per, (e.c/per) | 0], [far % per, (far/per) | 0], (nx, ny) => path.has(ny*per + nx) || trail.has(ny*per + nx) ? 3 : 0)) if (!path.has(c)) trail.add(c);
+      }
+    }
+    // path purpose: every end of the path and trail network is a port, the junction or a beat
+    const net = new Set([...path, ...trail]), ends = [];
+    const portCells = new Set(sides.map(s => { const [cx, cy] = portCell(s); return cy*per + cx; }));
+    for (const c of net){ let deg = 0; const cx = c % per, cy = (c/per) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = cx + dx, ny = cy + dy; if (nx >= 0 && ny >= 0 && nx < per && ny < per && net.has(ny*per + nx)) deg++; }
+      if (deg <= 1 && !portCells.has(c) && !(junction && c === junction[1]*per + junction[0]) && !q.cells.some(e => e.c === c)) ends.push(c); }
+    for (const c of ends) issues.push(`${sx},${sy}: path ends at cell ${c % per},${(c/per) | 0} with no purpose`);
+    // off-path share, estimated from land cells: path tiles = path cells × width × 4 (water is surfed, so left out)
+    let walk = 0, pathT = 0;
+    for (let cy = 0; cy < per; cy++) for (let cx = 0; cx < per; cx++){ const c = cy*per + cx, i = cellOf(cx, cy), m = plan.mass[i];
+      if (m === 4) continue;
+      walk += net.has(c) ? 16 : ROUTE_PLAN.walkTiles[m];
+      if (path.has(c)) pathT += ROUTE_PLAN.pathWidth[m]*4; }
+    q.path = [...path]; q.trail = [...trail]; q.junction = junction; q.portCells = [...portCells];
+    q.offPath = walk >= 32 ? Math.max(0, 1 - pathT/walk) : null; q.ends = ends;
+  }
+  const list = [...squares.values()], offs = list.map(q => q.offPath).filter(v => v !== null).sort((a, b) => a - b);
+  return { per, squares:list, missions, issues, dropped,
+    stats:{ squares:list.length, roles:list.reduce((a, q) => (a[q.role] = (a[q.role] || 0) + 1, a), {}), beats:list.reduce((a, q) => a + q.cells.length, 0),
+            purposeIssues:issues.filter(s => s.includes('no purpose')).length, offPathMedian:offs.length ? offs[offs.length >> 1] : null,
+            offPathAtTarget:offs.filter(v => v >= 0.8).length, offPathMeasured:offs.length, beatsDropped:dropped.length } };
+}
+// draws the route plan over the mass plan for a window: path cells (orange), trails (pale), ports, junction, beats
+function routePlanRGBA(plan, rp, opts = {}){
+  const base = massPlanRGBA(plan, opts), win = opts.window, px = opts.cellPx || 16, W = base.width, img = base.data, per = plan.per, labels = [];
+  const fill = (gx, gy, col, inset) => { const ox = (gx - win.x0*per)*px, oy = (gy - win.y0*per)*px;
+    if (ox < 0 || oy < 0 || ox >= W || oy >= base.height) return;
+    for (let y = inset; y < px - inset; y++) for (let x = inset; x < px - inset; x++){ const o = ((oy + y)*W + ox + x)*4; img[o] = col[0]; img[o + 1] = col[1]; img[o + 2] = col[2]; } };
+  for (const q of rp.squares){
+    if (q.x < win.x0 || q.y < win.y0 || q.x >= win.x0 + win.w || q.y >= win.y0 + win.h) continue;
+    const gx0 = q.x*per, gy0 = q.y*per, at = c => [gx0 + c % per, gy0 + ((c/per) | 0)];
+    for (const c of q.trail){ const [gx, gy] = at(c); fill(gx, gy, [250, 235, 170], 5); }
+    for (const c of q.path){ const [gx, gy] = at(c); fill(gx, gy, [235, 140, 40], 3); }
+    for (const c of q.portCells){ const [gx, gy] = at(c); fill(gx, gy, [200, 40, 40], 5); }
+    if (q.junction){ fill(gx0 + q.junction[0], gy0 + q.junction[1], [120, 40, 160], 4); }
+    for (const c of q.ends){ const [gx, gy] = at(c); fill(gx, gy, [255, 0, 255], 2); }
+    for (const e of q.cells){ const [gx, gy] = at(e.c); labels.push({ x:(gx - win.x0*per)*px + px/2, y:(gy - win.y0*per)*px + px/2, text:BEAT_GLYPH[e.beat] || '?', hidden:!!e.hidden }); }
+    labels.push({ x:(q.x - win.x0)*per*px + 4, y:(q.y - win.y0)*per*px + 12, text:`${q.role}${q.weather ? ' · ' + q.weather : ''}${q.offPath === null ? '' : ` · off-path ~${Math.round(q.offPath*100)}%`}`, role:true });
+  }
+  return { ...base, labels };
+}
 // Real-tile preview (proto-7): draws each map with real Emerald metatiles (General + Petalburg for now), chosen by the
 // model that tools/build_tile_model.py learns from the vanilla routes. Each tile gets a class; the metatile is picked
 // from what Emerald uses for that class given which neighbours share it and the metatiles already placed to the west
@@ -1670,7 +1863,7 @@ function describeAt(res, px, py, scale){
   return `square ${sx},${sy}${sq.wild ? ' (wild)' : ''} · border ${sq.border} · tile ${lx},${ly} · ${TILE_NAMES[sq.tiles[i]]}${st}${sq.trail[i] ? ' · main route' : ''} · level ${sq.level[i]}${sq.protectedMask[i] ? ' · seam band' : ''}`;
 }
 
-const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, WILD, CONTENT, generate, toRGBA, toRealRGBA, placeRealTiles, describeAt, planMasses, massPlanRGBA, MASS, MASS_NAMES, MASS_COLORS, PLAN, makeSeeds, hash32, mulberry32 };
+const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, WILD, CONTENT, generate, toRGBA, toRealRGBA, placeRealTiles, describeAt, planMasses, massPlanRGBA, planRoutes, routePlanRGBA, BEAT, BEAT_GLYPH, MASS, MASS_NAMES, MASS_COLORS, PLAN, makeSeeds, hash32, mulberry32 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else root.OverworldGen = api;
 })(typeof self !== 'undefined' ? self : this);
