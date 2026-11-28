@@ -1694,6 +1694,147 @@ function toRGBA(res, opts = {}){
   }
   return { width:W, height:H, data:img, scale:S };
 }
+// ===================== Composition step 2: region-wide mass plan =====================
+// A light semantic grid over the whole region at the 4×4-tile cell size (9×9 cells per 36×36 square). It holds broad
+// features only — which mass each cell belongs to (forest, meadow, sand, rock, water), rivers, relief mode and biome —
+// so a forest crossing a square edge is one forest. Masses are grown from the data, not traced: a raw pick per cell,
+// then majority smoothing, then fragments below a minimum size merge into their neighbours. Water from the coast,
+// lakes and rivers is kept as is. Computed for the whole region every time, so it never depends on the window.
+const MASS = { MEADOW:0, FOREST:1, SAND:2, ROCK:3, WATER:4 };
+const MASS_NAMES = ['meadow', 'forest', 'sand / bare ground', 'rock / high ground', 'water'];
+const MASS_COLORS = [[150, 205, 110], [40, 110, 60], [235, 215, 150], [150, 125, 110], [70, 140, 220]];
+const RELIEF_MODE_NAMES = ['lowland', 'foothills', 'mountain'];
+const PLAN = { cell:4, smoothPasses:3, minCells:[8, 8, 5, 8, 1], foothills:0.3, mountain:0.6, rawNoise:0.08 };
+function planMasses(inp){
+  const N = inp.N || 36, C = PLAN.cell, per = N/C, CW = inp.gridW*per, CH = inp.gridH*per;
+  const sampler = makeSampler(inp), seeds = makeSeeds(inp.seed || 0, inp.version || VERSION);
+  const sNoise = seeds.layer('massPlan'), mpt = (inp.kmPerSquare || 1)*1000/N;
+  const raw = new Uint8Array(CW*CH), river = new Uint8Array(CW*CH), mode = new Uint8Array(CW*CH), biome = new Uint8Array(CW*CH);
+  const ruggedAt = (gx, gy) => {
+    const s = sampler.shares(gx, gy), cls3 = s[CLS.ROCKY] + s[CLS.SNOW] + s[CLS.TUNDRA] + sampler.hill(gx, gy);
+    const ex = sampler.elevLand(gx + 4, gy) - sampler.elevLand(gx - 4, gy), ey = sampler.elevLand(gx, gy + 4) - sampler.elevLand(gx, gy - 4);
+    return Math.min(1, Math.max(cls3, Math.hypot(ex, ey)/(8*mpt)/RELIEF.steepSlope));
+  };
+  for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++){
+    const gx = cx*C + C/2, gy = cy*C + C/2, s = sampler.shares(gx, gy), i = cy*CW + cx;
+    if (s[CLS.WATER] > 0.5){ raw[i] = MASS.WATER; continue; }
+    const n = () => PLAN.rawNoise*(rand01(sNoise, cx, cy) - 0.5);
+    const score = [
+      s[CLS.GRASS] + s[CLS.CROP] + s[CLS.DRY] + s[CLS.WETLAND] + s[CLS.URBAN] + n(),        // meadow
+      s[CLS.FOREST] + s[CLS.MANGROVE] + n(),                                               // forest
+      s[CLS.DESERT] + (s[CLS.WATER] > 0.2 ? 0.35 : 0) + n(),                               // sand: desert, or a beach by the water
+      s[CLS.ROCKY] + s[CLS.SNOW] + 0.6*s[CLS.TUNDRA] + n() ];                              // rock / high ground
+    let best = 0; for (let k = 1; k < 4; k++) if (score[k] > score[best]) best = k;
+    raw[i] = best;
+    let bc = CLS.GRASS, bv = -1; for (let c = 0; c < NCLS; c++) if (c !== CLS.WATER && s[c] > bv){ bv = s[c]; bc = c; }
+    biome[i] = bc;
+    const R = ruggedAt(gx, gy); mode[i] = R >= PLAN.mountain ? 2 : R >= PLAN.foothills ? 1 : 0;
+  }
+  // rivers: cell-scale lines between the centres of neighbouring river sub-cells (as the tile generator does), kept
+  if (inp.river){
+    const SW = sampler.SW, SH = sampler.SH, sub = inp.sub, cpp = per/sub;      // cells per sub-cell
+    const isRiv = (sx, sy) => sx >= 0 && sy >= 0 && sx < SW && sy < SH && inp.river[sy*SW + sx] && sampler.subClass[sy*SW + sx] !== CLS.WATER;
+    const isWat = (sx, sy) => sx >= 0 && sy >= 0 && sx < SW && sy < SH && sampler.subClass[sy*SW + sx] === CLS.WATER;
+    const ctr = v => Math.min(Math.floor((v + 0.5)*cpp), Math.floor(v*cpp + cpp - 1));
+    const mark = (x, y) => { if (x >= 0 && y >= 0 && x < CW && y < CH){ river[y*CW + x] = 1; } };
+    for (let sy = 0; sy < SH; sy++) for (let sx = 0; sx < SW; sx++){
+      if (!isRiv(sx, sy)) continue;
+      for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]){
+        const nx = sx + dx, ny = sy + dy; if (!isRiv(nx, ny) && !isWat(nx, ny)) continue;
+        if ((dx < 0 || dy < 0) && isRiv(nx, ny)) continue;
+        const ax = ctr(sx), ay = ctr(sy), bx = ctr(nx), by = ctr(ny);
+        if (ax === bx) for (let y = Math.min(ay, by); y <= Math.max(ay, by); y++) mark(ax, y);
+        else for (let x = Math.min(ax, bx); x <= Math.max(ax, bx); x++) mark(x, ay);
+      }
+      mark(ctr(sx), ctr(sy));
+    }
+  }
+  // grow masses: majority smoothing (land only; water and rivers are fixed)
+  let mass = raw.slice();
+  for (let pass = 0; pass < PLAN.smoothPasses; pass++){
+    const out = mass.slice(), r = pass === 0 ? 1 : 2;
+    for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++){
+      const i = cy*CW + cx; if (mass[i] === MASS.WATER) continue;
+      const cnt = [0, 0, 0, 0, 0];
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++){
+        const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= CW || y >= CH) continue;
+        const m = mass[y*CW + x]; if (m !== MASS.WATER) cnt[m] += (dx || dy) ? 1 : 1.5; }
+      let b = mass[i]; for (let k = 0; k < 4; k++) if (cnt[k] > cnt[b]) b = k;
+      out[i] = b; }
+    mass = out;
+  }
+  // fragments below a minimum size merge into the neighbouring mass they touch most (lakes and ponds are kept)
+  let merged = 0;
+  for (let round = 0; round < 4; round++){
+    const comp = new Int32Array(CW*CH).fill(-1); let changed = false;
+    for (let i0 = 0; i0 < CW*CH; i0++){
+      if (comp[i0] >= 0 || mass[i0] === MASS.WATER) continue;
+      const m = mass[i0], q = [i0], cells = [], touch = [0, 0, 0, 0, 0]; comp[i0] = i0;
+      while (q.length){ const c = q.pop(); cells.push(c); const x = c % CW, y = (c/CW) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= CW || ny >= CH) continue; const j = ny*CW + nx;
+          if (mass[j] === m){ if (comp[j] < 0){ comp[j] = i0; q.push(j); } } else touch[mass[j]]++; } }
+      if (cells.length >= PLAN.minCells[m]) continue;
+      let b = -1; for (let k = 0; k < 4; k++) if (k !== m && touch[k] && (b < 0 || touch[k] > touch[b])) b = k;
+      if (b < 0) continue;
+      for (const c of cells) mass[c] = b; merged += cells.length; changed = true;
+    }
+    if (!changed) break;
+  }
+  for (let i = 0; i < CW*CH; i++) if (river[i]) mass[i] = MASS.WATER;
+  // relief mode and biome: smoothed the same way so they read as regions, not speckle
+  const smoothCat = (src, k, passes) => { let a = src.slice();
+    for (let p = 0; p < passes; p++){ const out = a.slice();
+      for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++){ const i = cy*CW + cx; if (raw[i] === MASS.WATER) continue;
+        const cnt = new Float64Array(k);
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++){ const x = cx + dx, y = cy + dy;
+          if (x < 0 || y < 0 || x >= CW || y >= CH || raw[y*CW + x] === MASS.WATER) continue; cnt[a[y*CW + x]]++; }
+        let b = a[i]; for (let c = 0; c < k; c++) if (cnt[c] > cnt[b]) b = c; out[i] = b; }
+      a = out; }
+    return a; };
+  const modeS = smoothCat(mode, 3, 2), biomeS = smoothCat(biome, NCLS, 2);
+  // metrics
+  let kept = 0, land = 0; for (let i = 0; i < CW*CH; i++) if (raw[i] !== MASS.WATER){ land++; if (raw[i] === mass[i]) kept++; }
+  const patches = [0, 0, 0, 0, 0], sizes = [[], [], [], [], []]; { const seen = new Uint8Array(CW*CH);
+    for (let i0 = 0; i0 < CW*CH; i0++){ if (seen[i0]) continue; const m = mass[i0], q = [i0]; seen[i0] = 1; let n = 0;
+      while (q.length){ const c = q.pop(); n++; const x = c % CW, y = (c/CW) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]){ const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= CW || ny >= CH) continue;
+          const j = ny*CW + nx; if (!seen[j] && mass[j] === m){ seen[j] = 1; q.push(j); } } }
+      patches[m]++; sizes[m].push(n); } }
+  let edgePairs = 0, edgeSame = 0;      // across square edges: how often the mass continues on the other side
+  for (let cy = 0; cy < CH; cy++) for (let cx = 0; cx < CW; cx++){
+    if ((cx + 1) % per === 0 && cx + 1 < CW){ edgePairs++; if (mass[cy*CW + cx] === mass[cy*CW + cx + 1]) edgeSame++; }
+    if ((cy + 1) % per === 0 && cy + 1 < CH){ edgePairs++; if (mass[cy*CW + cx] === mass[(cy + 1)*CW + cx]) edgeSame++; } }
+  const med = a => a.length ? a.slice().sort((x, y) => x - y)[a.length >> 1] : 0;
+  return { CW, CH, per, cell:C, N, mass, raw, river, mode:modeS, biome:biomeS,
+    stats:{ cells:CW*CH, keptFromData:land ? kept/land : 1, fragmentsMerged:merged, edgeContinuity:edgePairs ? edgeSame/edgePairs : 1,
+            patches:Object.fromEntries(MASS_NAMES.map((n, k) => [n, patches[k]])), medianPatchCells:Object.fromEntries(MASS_NAMES.map((n, k) => [n, med(sizes[k])])) } };
+}
+// draws the plan: region view (whole region, cellPx per cell, window outlined) or window view (cells of one 3×3 window,
+// square borders, the exact 7-tile seam band shaded, relief mode as hatching, rivers lighter)
+function massPlanRGBA(plan, opts = {}){
+  const win = opts.window, px = opts.cellPx || (win ? 16 : 3);
+  const x0 = win ? win.x0*plan.per : 0, y0 = win ? win.y0*plan.per : 0, cw = win ? win.w*plan.per : plan.CW, ch = win ? win.h*plan.per : plan.CH;
+  const W = cw*px, H = ch*px, img = new Uint8ClampedArray(W*H*4), tpx = px/plan.cell;
+  for (let cy = 0; cy < ch; cy++) for (let cx = 0; cx < cw; cx++){
+    const i = (y0 + cy)*plan.CW + x0 + cx, m = plan.mass[i], md = plan.mode[i];
+    let col = plan.river[i] ? [110, 175, 240] : MASS_COLORS[m];
+    if (opts.raw) col = MASS_COLORS[plan.raw[i]];
+    for (let y = 0; y < px; y++) for (let x = 0; x < px; x++){
+      let c = col;
+      if (!opts.raw && m !== MASS.WATER && md && ((x + y) % (md === 2 ? 4 : 7) === 0)) c = c.map(v => v*0.6);   // relief hatching
+      if (win && opts.showBand){ const tx = ((x0 + cx)*plan.cell + Math.floor(x/tpx)) % plan.N, ty = ((y0 + cy)*plan.cell + Math.floor(y/tpx)) % plan.N;
+        if (tx < BAND || ty < BAND || tx >= plan.N - BAND || ty >= plan.N - BAND) c = c.map(v => v*0.8 + 30); }
+      const o = ((cy*px + y)*W + cx*px + x)*4; img[o] = c[0]; img[o + 1] = c[1]; img[o + 2] = c[2]; img[o + 3] = 255; }
+  }
+  const line = (x, y, col) => { if (x < 0 || y < 0 || x >= W || y >= H) return; const o = (y*W + x)*4; img[o] = col[0]; img[o + 1] = col[1]; img[o + 2] = col[2]; };
+  const sq = plan.per*px;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (x % sq === 0 || y % sq === 0) line(x, y, win ? [200, 60, 60] : [90, 90, 90]);
+  if (!win && opts.outline){ const o = opts.outline;
+    for (let x = o.x0*sq; x <= (o.x0 + o.w)*sq; x++){ line(x, o.y0*sq, [255, 255, 0]); line(x, (o.y0 + o.h)*sq - 1, [255, 255, 0]); }
+    for (let y = o.y0*sq; y <= (o.y0 + o.h)*sq; y++){ line(o.x0*sq, y, [255, 255, 0]); line((o.x0 + o.w)*sq - 1, y, [255, 255, 0]); } }
+  return { width:W, height:H, data:img };
+}
 // Real-tile preview (proto-7): draws each map with real Emerald metatiles (General + Petalburg for now), chosen by the
 // model that tools/build_tile_model.py learns from the vanilla routes. Each tile gets a class; the metatile is picked
 // from what Emerald uses for that class given which neighbours share it and the metatiles already placed to the west
@@ -1759,7 +1900,7 @@ function describeAt(res, px, py, scale){
   return `square ${sx},${sy}${sq.wild ? ' (wild)' : ''} · border ${sq.border} · tile ${lx},${ly} · ${TILE_NAMES[sq.tiles[i]]}${st}${sq.trail[i] ? ' · main route' : ''} · level ${sq.level[i]}${sq.protectedMask[i] ? ' · seam band' : ''}`;
 }
 
-const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, WILD, CONTENT, generate, toRGBA, toRealRGBA, placeRealTiles, describeAt, makeSeeds, hash32, mulberry32 };
+const api = { VERSION, BAND, TILE, TILE_NAMES, CLS, PROFILE, LIMITS, COST, RELIEF, WAYPOINTS, WILD, CONTENT, generate, toRGBA, toRealRGBA, placeRealTiles, describeAt, planMasses, massPlanRGBA, MASS, MASS_NAMES, MASS_COLORS, PLAN, makeSeeds, hash32, mulberry32 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else root.OverworldGen = api;
 })(typeof self !== 'undefined' ? self : this);
@@ -5301,7 +5442,7 @@ function showOverworld(){
     box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <b style="font-family:'Press Start 2P',monospace;font-size:10px">OVERWORLD 3×3 (PROTOTYPE)</b>
         <label>terrace blocks <select id="owBlock"><option value="4" selected>4×4</option><option value="3">3×3</option></select></label>
-        <label>view <select id="owMode"><option value="real" selected>real tiles</option><option value="terrain">terrain</option><option value="walk">walkability</option></select></label>
+        <label>view <select id="owMode"><option value="plan">mass plan (step 2)</option><option value="real" selected>real tiles</option><option value="terrain">terrain</option><option value="walk">walkability</option></select></label>
         <label><input type="checkbox" id="owApprox"> mark guessed tiles</label>
         <label><input type="checkbox" id="owSeams" checked> seams</label>
         <label><input type="checkbox" id="owBand"> seam bands</label>
@@ -5316,7 +5457,39 @@ function showOverworld(){
   }
   drawOverworld();
 }
+// Composition step 2: the region-wide mass plan, drawn for the 3×3 window and for the whole region
+let owPlanCache = null;
+function drawMassPlan(){
+  const t0 = performance.now(), c = overworldCenter(), inp = overworldInput(c);
+  const key = [inp.seed, inp.gridW, inp.gridH, OverworldGen.VERSION, (state.ndvi || []).length].join(':');
+  if (!owPlanCache || owPlanCache.key !== key) owPlanCache = { key, plan:OverworldGen.planMasses(inp) };
+  const plan = owPlanCache.plan, ms = Math.round(performance.now() - t0), win = { x0:c.x - 1, y0:c.y - 1, w:3, h:3 };
+  const img = OverworldGen.massPlanRGBA(plan, { window:win, cellPx:16, showBand:$('owBand').checked, raw:$('owApprox').checked });
+  const cv = $('owCanvas'), k = Math.max(0.5, Math.min(2, Math.min(innerWidth*0.85, innerHeight*0.55)/img.width));
+  cv.width = img.width; cv.height = img.height; cv.style.width = Math.round(img.width*k) + 'px';
+  cv.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+  cv.onmousemove = e => { const b = cv.getBoundingClientRect(), cx = Math.floor((e.clientX - b.left)*cv.width/b.width/16), cy = Math.floor((e.clientY - b.top)*cv.height/b.height/16);
+    const gx = win.x0*plan.per + cx, gy = win.y0*plan.per + cy, i = gy*plan.CW + gx; if (i < 0 || i >= plan.mass.length) return;
+    $('owHover').textContent = `Cell ${gx},${gy} (square ${Math.floor(gx/plan.per)},${Math.floor(gy/plan.per)}): ${OverworldGen.MASS_NAMES[plan.mass[i]]}${plan.river[i] ? ' (river)' : ''} · from the data: ${OverworldGen.MASS_NAMES[plan.raw[i]]} · relief: ${['lowland', 'foothills', 'mountain'][plan.mode[i]]}`; };
+  cv.onclick = cv.onmousemove;
+  const reg = OverworldGen.massPlanRGBA(plan, { cellPx:3, outline:win, raw:$('owApprox').checked });
+  let rc = $('owRegionCanvas');
+  if (!rc){ rc = document.createElement('canvas'); rc.id = 'owRegionCanvas'; rc.style.display = 'block'; rc.style.marginTop = '8px'; rc.style.imageRendering = 'pixelated'; $('owKey').after(rc); }
+  rc.style.display = 'block'; rc.width = reg.width; rc.height = reg.height; rc.style.width = Math.min(reg.width, Math.round(innerWidth*0.85)) + 'px';
+  rc.getContext('2d').putImageData(new ImageData(reg.data, reg.width, reg.height), 0, 0);
+  const C = OverworldGen.MASS_COLORS, sw = k => `<span style="color:rgb(${C[k].join(',')})">■</span>`;
+  $('owKey').innerHTML = `Mass plan (composition step 2): ${sw(0)} meadow ${sw(1)} forest ${sw(2)} sand / bare ground ${sw(3)} rock / high ground ${sw(4)} water <span style="color:rgb(110,175,240)">■</span> river · hatching: light = foothills, dense = mountain · each small square is a 4×4-tile cell; red lines are map edges; the lighter rim is the exact 7-tile seam band · tick "mark guessed tiles" to see the raw data picks instead of the grown masses · below: the whole region, yellow box = this window`;
+  const st = plan.stats;
+  $('owReport').textContent = [
+    `Mass plan for the whole region: ${plan.CW}×${plan.CH} cells in ${ms} ms (cached after the first draw)`,
+    `Cells that kept the mass the data picked: ${Math.round(st.keptFromData*100)}% · fragments merged: ${st.fragmentsMerged} cells · masses continuing across map edges: ${Math.round(st.edgeContinuity*100)}% of edge cells`,
+    'Patches (median size in cells): ' + Object.entries(st.patches).map(([n, v]) => `${n} ${v} (${st.medianPatchCells[n]})`).join(' · '),
+  ].join('\n');
+}
 function drawOverworld(){
+  const rcv = document.getElementById('owRegionCanvas');
+  if ($('owMode').value === 'plan') return drawMassPlan();
+  if (rcv) rcv.style.display = 'none';
   const t0 = performance.now();
   let res;
   try { res = OverworldGen.generate({ ...overworldInput(overworldCenter()), terraceBlock:+$('owBlock').value }); }

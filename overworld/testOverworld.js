@@ -41,8 +41,19 @@ function makeRegion(){
 }
 
 const region = makeRegion();
+
 const failures = [];
 const check = (cond, msg) => { if (!cond) failures.push(msg); console.log((cond ? 'PASS ' : 'FAIL ') + msg); };
+
+// composition step 2: region-wide mass plan — deterministic, whole region, coherent masses
+{
+  const p1 = OG.planMasses({ ...region, seed:777, N:36 }), p2 = OG.planMasses({ ...region, seed:777, N:36 });
+  check(p1.CW === region.gridW*9 && p1.CH === region.gridH*9, `mass plan covers the whole region (${p1.CW}×${p1.CH} cells)`);
+  check(p1.mass.every((v, k) => v === p2.mass[k]), 'mass plan is deterministic');
+  check(p1.stats.edgeContinuity > 0.8, `masses continue across map edges (${Math.round(p1.stats.edgeContinuity*100)}%)`);
+  const small = Object.entries(p1.stats.medianPatchCells).filter(([n, v]) => n !== 'water' && v > 0 && v < 8);
+  check(!small.length, 'no mass made of fragments below the minimum size');
+}
 const digest = res => res.squares.map(s => `${s.x},${s.y}:` + OG.hash32(...s.tiles)).join('|');
 
 for (const [N, block] of [[36, 4], [36, 3]]){
